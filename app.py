@@ -25,7 +25,6 @@ from spacy.language import Language
 from spacy_langdetect import LanguageDetector
 
 # --- NLP Imports ---
-from sentence_transformers import SentenceTransformer, util
 from textblob import TextBlob
 
 # --- NLTK Setup ---
