@@ -14,5 +14,4 @@ sentence-transformers
 textblob
 scikit-learn
 python-dotenv
-gdown
 gunicorn

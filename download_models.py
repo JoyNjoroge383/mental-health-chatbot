@@ -1,5 +1,27 @@
 import os
-import gdown
+import requests
+
+def download_file(file_id, filename):
+    if os.path.exists(filename):
+        print(f"{filename} already exists, skipping.")
+        return
+
+    print(f"Downloading {filename}...")
+    session = requests.Session()
+    url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
+    response = session.get(url, stream=True)
+
+    for key, value in response.cookies.items():
+        if key.startswith('download_warning'):
+            url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm={value}"
+            response = session.get(url, stream=True)
+            break
+
+    with open(filename, 'wb') as f:
+        for chunk in response.iter_content(32768):
+            if chunk:
+                f.write(chunk)
+    print(f"{filename} downloaded successfully.")
 
 def download_models():
     print("Checking for model files...")
@@ -12,22 +34,7 @@ def download_models():
     }
 
     for filename, file_id in files.items():
-        if not os.path.exists(filename):
-            print(f"Downloading {filename}...")
-            gdown.download(f"https://drive.google.com/uc?id={file_id}", filename, quiet=False)
-        else:
-            print(f"{filename} already exists, skipping.")
-
-    models_dir = "models"
-    if not os.path.exists(models_dir):
-        print("Downloading models folder...")
-        gdown.download_folder(
-            f"https://drive.google.com/drive/folders/10_cG_r_iCBVTpI7hfxV2ucTqFX4EFeMF",
-            output=models_dir,
-            quiet=False
-        )
-    else:
-        print("models folder already exists, skipping.")
+        download_file(file_id, filename)
 
     print("All model files ready!")
 
