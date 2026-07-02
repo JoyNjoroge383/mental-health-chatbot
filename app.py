@@ -50,6 +50,9 @@ wordnet.ensure_loaded()
 lemmatizer = WordNetLemmatizer()
 
 # --- Load Chatbot Model ---
+from download_models import download_models
+download_models()
+
 model = load_model('model.h5')
 intents = json.loads(open('intents.json').read())
 words = pickle.load(open('texts.pkl', 'rb'))

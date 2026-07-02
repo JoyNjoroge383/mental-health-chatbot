@@ -1,42 +1,21 @@
 import os
-import requests
+import shutil
+from huggingface_hub import hf_hub_download
 
-def download_file(file_id, filename):
-    if os.path.exists(filename):
-        print(f"{filename} already exists, skipping.")
-        return
-
-    print(f"Downloading {filename}...")
-    session = requests.Session()
-    url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
-    response = session.get(url, stream=True)
-
-    for key, value in response.cookies.items():
-        if key.startswith('download_warning'):
-            url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm={value}"
-            response = session.get(url, stream=True)
-            break
-
-    with open(filename, 'wb') as f:
-        for chunk in response.iter_content(32768):
-            if chunk:
-                f.write(chunk)
-    print(f"{filename} downloaded successfully.")
-
+REPO_ID = "Tamara254/mindcare-models"
+FILES = ["model.h5", "texts.pkl", "labels.pkl", "intents.json"]
+DEST_DIR = os.path.dirname(os.path.abspath(__file__))  # saves next to this script
 def download_models():
-    print("Checking for model files...")
-
-    files = {
-        "intents.json": "1E3Arq0UjcDy19jlBItt5lW9GgZHyJ03t",
-        "labels.pkl": "1i0RAgOOlz--uP51DEj3yFZ8JDpBY1mEu",
-        "model.h5": "1KUzM_3QIqv6QPkdX-e_A0lXA9iLdSkk7",
-        "texts.pkl": "1qoOKValeyuokWdI5YRdNbDygyLJC7LPq",
-    }
-
-    for filename, file_id in files.items():
-        download_file(file_id, filename)
-
-    print("All model files ready!")
+    for filename in FILES:
+        local_path = os.path.join(DEST_DIR, filename)
+        if os.path.exists(local_path):
+            print(f"{filename} already exists. Skipping.")
+            continue
+        print(f"Downloading {filename} from Hugging Face...")
+        Cached_path = hf_hub_download(repo_id=REPO_ID, filename=filename)
+        shutil.move(Cached_path, local_path)
+        print(f"Saved to {local_path}")
 
 if __name__ == "__main__":
     download_models()
+        
