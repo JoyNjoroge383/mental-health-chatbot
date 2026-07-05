@@ -1,18 +1,34 @@
 Flask==3.0.0
-flask-cors
-keras
+flask-cors==6.0.3
+gunicorn==26.0.0
+python-dotenv==1.2.2
+
+numpy==1.22.2
+scikit-learn==1.7.2
 nltk==3.8.1
-numpy
-sacremoses
-sentencepiece
+textblob==0.18.0.post0
+sacremoses==0.1.1
+sentencepiece==0.2.1
+
+pydantic==1.10.13
+typing-extensions==4.5.0
+huggingface_hub==0.19.4
+transformers==4.35.2
+
 spacy==3.7.2
-spacy-langdetect==0.1.2
 spacy-legacy==3.0.12
 spacy-loggers==1.0.5
-transformers==4.35.2
-textblob
-scikit-learn
-python-dotenv
-gunicorn
+spacy-langdetect==0.1.2
+langdetect==1.0.7
+# English model matched to spacy 3.7.x, installed as a pinned wheel so the build
+# never depends on `spacy download` resolving a version at build time (that lookup
+# can fail on some hosts and produce a 404 for a blank-version URL).
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
+
+# Inference uses a lightweight TFLite runtime (~5 MB) instead of tensorflow-cpu
+# (~350 MB). Wheels are published for Linux only, so this installs on Render but
+# not on Windows; local Windows/macOS dev falls back to the interpreter bundled
+# with a full TensorFlow install (see the import chain in app.py). The
+# model.h5 -> model.tflite conversion (convert_to_tflite.py) is a one-time,
+# local step that still needs full TensorFlow - it is NOT part of this file.
 tflite-runtime ; sys_platform == "linux"
-huggingface_hub
