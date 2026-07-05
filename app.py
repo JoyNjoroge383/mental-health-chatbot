@@ -17,7 +17,7 @@ from nltk.stem import WordNetLemmatizer
 from nltk.corpus import wordnet
 import pickle
 import numpy as np
-from keras.models import load_model
+import tensorflow as tf
 import json
 import random
 import spacy
@@ -49,11 +49,15 @@ wordnet.ensure_loaded()
 
 lemmatizer = WordNetLemmatizer()
 
-# --- Load Chatbot Model ---
+# --- Load Chatbot Model (TFLite) ---
 from download_models import download_models
 download_models()
 
-model = load_model('model.h5')
+interpreter = tf.lite.Interpreter(model_path='model.tflite')
+interpreter.allocate_tensors()
+tflite_input_details = interpreter.get_input_details()
+tflite_output_details = interpreter.get_output_details()
+
 intents = json.loads(open('intents.json').read())
 words = pickle.load(open('texts.pkl', 'rb'))
 classes = pickle.load(open('labels.pkl', 'rb'))
@@ -144,7 +148,7 @@ def get_nlp_prediction(sentence):
     has_positive_word = any(pos in sentence_lower for pos in positive_words)
     
     # 1. Get bag-of-words prediction
-    bow_results = predict_class(sentence, model)
+    bow_results = predict_class(sentence)
     
     # 2. Get semantic search results
     semantic_results = semantic_search(sentence, top_k=3)
@@ -272,13 +276,18 @@ def bow(sentence, words, show_details=True):
                 bag[i] = 1
     return np.array(bag)
 
-def predict_class(sentence, model):
+def predict_class(sentence, model=None):
     p = bow(sentence, words, show_details=False)
-    res = model.predict(np.array([p]))[0]
+    input_data = np.array([p], dtype=np.float32)
+
+    interpreter.set_tensor(tflite_input_details[0]['index'], input_data)
+    interpreter.invoke()
+    res = interpreter.get_tensor(tflite_output_details[0]['index'])[0]
+
     ERROR_THRESHOLD = 0.1  # Lowered threshold for better matching
     results = [[i, r] for i, r in enumerate(res) if r > ERROR_THRESHOLD]
     results.sort(key=lambda x: x[1], reverse=True)
-    
+
     return_list = []
     for r in results:
         return_list.append({"intent": classes[r[0]], "probability": str(r[1])})
@@ -361,8 +370,13 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()  # "groq", "gemini", or
 
 # Groq Configuration (recommended - free, fast, OpenAI-compatible)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "mixtral-8x7b-32768")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+# Some providers (Groq included) sit behind bot-protection that blocks
+# Python's default urllib User-Agent ("Python-urllib/3.x"). Sending a
+# normal browser-like User-Agent avoids spurious 403 Forbidden responses.
+DEFAULT_HTTP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
 
 # Gemini Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -472,7 +486,8 @@ def generate_groq_response(user_text, sentiment_info, response_style=None):
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {GROQ_API_KEY}"
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "User-Agent": DEFAULT_HTTP_USER_AGENT
             },
             method="POST"
         )
@@ -488,7 +503,17 @@ def generate_groq_response(user_text, sentiment_info, response_style=None):
         
         return None
 
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
+    except urllib.error.HTTPError as e:
+        error_body = ""
+        try:
+            error_body = e.read().decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        print(f"Groq Error: {e}")
+        if error_body:
+            print(f"Groq Error Body: {error_body}")
+        return None
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
         print(f"Groq Error: {e}")
         return None
 
@@ -529,7 +554,10 @@ def generate_gemini_response(user_text, sentiment_info, response_style=None):
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": DEFAULT_HTTP_USER_AGENT
+            },
             method="POST"
         )
 
@@ -630,7 +658,8 @@ def check_groq_status():
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {GROQ_API_KEY}"
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "User-Agent": DEFAULT_HTTP_USER_AGENT
             },
             method="POST"
         )
@@ -667,7 +696,10 @@ def check_gemini_status():
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": DEFAULT_HTTP_USER_AGENT
+            },
             method="POST"
         )
         
