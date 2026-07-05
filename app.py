@@ -10,6 +10,7 @@ from transformers import MarianTokenizer
 import nltk
 import os
 import re
+import sys
 import urllib.request
 import urllib.error
 from dotenv import load_dotenv
@@ -17,12 +18,23 @@ from nltk.stem import WordNetLemmatizer
 from nltk.corpus import wordnet
 import pickle
 import numpy as np
-import tensorflow as tf
 import json
 import random
 import spacy
 from spacy.language import Language
 from spacy_langdetect import LanguageDetector
+
+# --- TFLite Interpreter (tflite-runtime on Linux, falls back to full TF elsewhere) ---
+if sys.platform.startswith("linux"):
+    try:
+        from tflite_runtime.interpreter import Interpreter
+    except ImportError:
+        # tflite-runtime not installed even though we're on Linux; fall back to TF.
+        import tensorflow as tf
+        Interpreter = tf.lite.Interpreter
+else:
+    import tensorflow as tf
+    Interpreter = tf.lite.Interpreter
 
 # --- NLP Imports ---
 from textblob import TextBlob
@@ -53,7 +65,7 @@ lemmatizer = WordNetLemmatizer()
 from download_models import download_models
 download_models()
 
-interpreter = tf.lite.Interpreter(model_path='model.tflite')
+interpreter = Interpreter(model_path='model.tflite')
 interpreter.allocate_tensors()
 tflite_input_details = interpreter.get_input_details()
 tflite_output_details = interpreter.get_output_details()
@@ -100,14 +112,14 @@ def analyze_sentiment(text):
     blob = TextBlob(text)
     polarity = blob.sentiment.polarity  # -1 to 1
     subjectivity = blob.sentiment.subjectivity  # 0 to 1
-    
+
     if polarity < -0.3:
         sentiment = "negative"
     elif polarity > 0.3:
         sentiment = "positive"
     else:
         sentiment = "neutral"
-    
+
     return {
         "polarity": polarity,
         "subjectivity": subjectivity,
@@ -142,17 +154,17 @@ def get_nlp_prediction(sentence):
     negation_words = ["not", "n't", "don't", "dont", "doesn't", "doesnt", "never", "no", "can't", "cant", "won't", "wont", "isn't", "isnt", "aren't", "arent", "wasn't", "wasnt", "weren't", "werent"]
     sentence_lower = sentence.lower()
     has_negation = any(neg in sentence_lower for neg in negation_words)
-    
+
     # Positive feeling words that when negated should flip to sad
     positive_words = ["ok", "okay", "good", "fine", "great", "well", "happy", "alright"]
     has_positive_word = any(pos in sentence_lower for pos in positive_words)
-    
+
     # 1. Get bag-of-words prediction
     bow_results = predict_class(sentence)
-    
+
     # 2. Get semantic search results
     semantic_results = semantic_search(sentence, top_k=3)
-    
+
     # 3. Combine results - semantic search gets priority for better understanding
     if semantic_results and semantic_results[0]['score'] > 0.5:
         # High semantic confidence - use semantic result
@@ -171,13 +183,13 @@ def get_nlp_prediction(sentence):
         method = "semantic_fallback"
     else:
         return None, 0, "none"
-    
+
     # Handle negation: If user says "not ok", "don't feel good", etc., flip happy to sad
     if has_negation and has_positive_word and best_intent == "happy":
         best_intent = "sad"
         method = method + "_negation_corrected"
         print(f"  [Negation detected] Flipped intent from 'happy' to 'sad'")
-    
+
     return best_intent, confidence, method
 
 
@@ -325,19 +337,19 @@ def generate_nlp_response(user_text, sentiment_info):
     """
     # Get hybrid NLP prediction
     best_intent, confidence, method = get_nlp_prediction(user_text)
-    
+
     print(f"  NLP Method: {method}, Intent: {best_intent}, Confidence: {confidence:.3f}")
     print(f"  Sentiment: {sentiment_info['sentiment']} (polarity: {sentiment_info['polarity']:.2f})")
-    
+
     # Extract entities for context
     entities = extract_entities(user_text)
     if entities:
         print(f"  Entities: {[e['text'] + ' (' + e['label'] + ')' for e in entities]}")
-    
+
     # Get base response
     if best_intent and confidence > 0.25:
         response = get_response_by_intent(best_intent, intents)
-        
+
         if response:
             # Enhance response based on sentiment
             if sentiment_info['sentiment'] == 'negative' and sentiment_info['polarity'] < -0.5:
@@ -348,13 +360,13 @@ def generate_nlp_response(user_text, sentiment_info):
                     "I understand this is hard for you. "
                 ]
                 response = random.choice(empathy_prefixes) + response
-            
+
             # Add confidence note for lower confidence matches
             if confidence < 0.4:
                 response += " Feel free to tell me more if I didn't fully address your concern."
-            
+
             return response
-    
+
     # Fallback response with sentiment awareness
     if sentiment_info['sentiment'] == 'negative':
         return "I can tell something is troubling you. I'm here to listen. Could you tell me more about what's on your mind?"
@@ -460,7 +472,7 @@ def generate_groq_response(user_text, sentiment_info, response_style=None):
     if not GROQ_API_KEY:
         print("Groq API key not configured.")
         return None
-    
+
     try:
         style_instruction = get_style_instruction(response_style)
         user_prompt = (
@@ -500,482 +512,8 @@ def generate_groq_response(user_text, sentiment_info, response_style=None):
             message = response_data["choices"][0].get("message", {})
             content = message.get("content", "").strip()
             return content or None
-        
+
         return None
 
     except urllib.error.HTTPError as e:
         error_body = ""
-        try:
-            error_body = e.read().decode("utf-8", errors="ignore")
-        except Exception:
-            pass
-        print(f"Groq Error: {e}")
-        if error_body:
-            print(f"Groq Error Body: {error_body}")
-        return None
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
-        print(f"Groq Error: {e}")
-        return None
-
-
-def generate_gemini_response(user_text, sentiment_info, response_style=None):
-    """Generate response via Google Gemini API. Returns None on failure."""
-    if not GEMINI_API_KEY:
-        print("Gemini API key not configured.")
-        return None
-    
-    try:
-        style_instruction = get_style_instruction(response_style)
-        user_prompt = (
-            f"User message: {user_text}\n"
-            f"Detected sentiment: {sentiment_info['sentiment']} (polarity={sentiment_info['polarity']:.2f}).\n"
-            f"Style instruction: {style_instruction}\n"
-            "Respond with emotional support and practical next steps."
-        )
-
-        url = GEMINI_CHAT_URL.format(model=GEMINI_MODEL) + f"?key={GEMINI_API_KEY}"
-        
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": MENTAL_HEALTH_SYSTEM_PROMPT},
-                        {"text": user_prompt}
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "temperature": LLM_TEMPERATURE,
-                "topP": LLM_TOP_P,
-                "maxOutputTokens": 500
-            }
-        }
-
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": DEFAULT_HTTP_USER_AGENT
-            },
-            method="POST"
-        )
-
-        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS) as response:
-            response_text = response.read().decode("utf-8")
-            response_data = json.loads(response_text)
-
-        if "candidates" in response_data and response_data["candidates"]:
-            content = response_data["candidates"][0].get("content", {})
-            parts = content.get("parts", [])
-            if parts:
-                return parts[0].get("text", "").strip() or None
-        
-        return None
-
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
-        print(f"Gemini Error: {e}")
-        return None
-
-
-def generate_ollama_response(user_text, sentiment_info, response_style=None):
-    """Generate response via Ollama chat API. Returns None on failure."""
-    try:
-        style_instruction = get_style_instruction(response_style)
-        user_prompt = (
-            f"User message: {user_text}\n"
-            f"Detected sentiment: {sentiment_info['sentiment']} (polarity={sentiment_info['polarity']:.2f}).\n"
-            f"Style instruction: {style_instruction}\n"
-            "Respond with emotional support and practical next steps."
-        )
-
-        payload = {
-            "model": OLLAMA_MODEL,
-            "stream": False,
-            "messages": [
-                {"role": "system", "content": MENTAL_HEALTH_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt}
-            ],
-            "options": {
-                "temperature": LLM_TEMPERATURE,
-                "top_p": LLM_TOP_P
-            }
-        }
-
-        req = urllib.request.Request(
-            OLLAMA_CHAT_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-
-        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS) as response:
-            response_text = response.read().decode("utf-8")
-            response_data = json.loads(response_text)
-
-        message = response_data.get("message", {})
-        content = message.get("content", "").strip()
-        return content or None
-
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
-        print(f"Ollama Error: {e}")
-        return None
-
-
-def generate_llm_response(user_text, sentiment_info, response_style=None):
-    """Generate response via configured LLM provider (Groq, Gemini, or Ollama). Returns None on failure."""
-    if LLM_PROVIDER == "groq":
-        return generate_groq_response(user_text, sentiment_info, response_style)
-    elif LLM_PROVIDER == "gemini":
-        return generate_gemini_response(user_text, sentiment_info, response_style)
-    else:
-        return generate_ollama_response(user_text, sentiment_info, response_style)
-
-
-def check_groq_status():
-    """Check Groq API reachability."""
-    status = {
-        "provider": "groq",
-        "model": GROQ_MODEL,
-        "service_reachable": False,
-        "api_key_configured": bool(GROQ_API_KEY),
-        "error": None,
-    }
-    
-    if not GROQ_API_KEY:
-        status["error"] = "Groq API key not configured"
-        return status
-    
-    try:
-        payload = {
-            "model": GROQ_MODEL,
-            "messages": [{"role": "user", "content": "test"}],
-            "max_tokens": 10
-        }
-        
-        req = urllib.request.Request(
-            GROQ_CHAT_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "User-Agent": DEFAULT_HTTP_USER_AGENT
-            },
-            method="POST"
-        )
-        
-        with urllib.request.urlopen(req, timeout=10) as response:
-            response.read()
-        
-        status["service_reachable"] = True
-    except Exception as e:
-        status["error"] = str(e)
-    
-    return status
-
-
-def check_gemini_status():
-    """Check Google Gemini API reachability."""
-    status = {
-        "provider": "gemini",
-        "model": GEMINI_MODEL,
-        "service_reachable": False,
-        "api_key_configured": bool(GEMINI_API_KEY),
-        "error": None,
-    }
-    
-    if not GEMINI_API_KEY:
-        status["error"] = "Gemini API key not configured"
-        return status
-    
-    try:
-        # Test endpoint
-        url = GEMINI_CHAT_URL.format(model=GEMINI_MODEL) + f"?key={GEMINI_API_KEY}"
-        payload = {"contents": [{"parts": [{"text": "test"}]}]}
-        
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": DEFAULT_HTTP_USER_AGENT
-            },
-            method="POST"
-        )
-        
-        with urllib.request.urlopen(req, timeout=10) as response:
-            response.read()
-        
-        status["service_reachable"] = True
-    except Exception as e:
-        status["error"] = str(e)
-    
-    return status
-
-
-def check_ollama_status():
-    """Check Ollama API reachability and whether configured model is available."""
-    status = {
-        "provider": "ollama",
-        "chat_url": OLLAMA_CHAT_URL,
-        "tags_url": OLLAMA_TAGS_URL,
-        "model": OLLAMA_MODEL,
-        "service_reachable": False,
-        "model_available": False,
-        "error": None,
-    }
-
-    try:
-        req = urllib.request.Request(OLLAMA_TAGS_URL, method="GET")
-        with urllib.request.urlopen(req, timeout=10) as response:
-            response_text = response.read().decode("utf-8")
-            data = json.loads(response_text)
-
-        models = data.get("models", [])
-        names = [m.get("name", "") for m in models]
-        status["service_reachable"] = True
-        status["model_available"] = any(name.startswith(OLLAMA_MODEL) for name in names)
-    except Exception as e:
-        status["error"] = str(e)
-
-    return status
-
-# --- FLASK APP ---
-
-app = Flask(__name__)
-app.static_folder = 'static'
-CORS(app)  # Enable CORS for all routes
-
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-@app.route("/get")
-def get_bot_response():
-    userText = request.args.get('msg')
-    response_style = request.args.get('style', DEFAULT_RESPONSE_STYLE)
-
-    if not userText:
-        return "Please type a message so I can help."
-
-    print(f"\n{'='*50}")
-    print(f"Raw Input: {userText}")
-
-    # 1. Detect Language
-    doc = nlp(userText)
-    detected_language = doc._.language['language']
-    print(f"Detected Language: {detected_language}")
-
-    # 2. Prepare text for processing (Must be English for the chatbot model)
-    processing_text = userText
-    
-    # If user spoke Swahili, translate to English first
-    if detected_language == 'sw':
-        processing_text = translate_to_english(userText)
-        print(f"Translated to English: {processing_text}")
-
-    # 3. NLP Analysis
-    sentiment_info = analyze_sentiment(processing_text)
-
-    # 4. Safety gate + LLM/NLP response selection
-    if contains_crisis_language(userText, processing_text):
-        bot_response_en = get_crisis_response()
-    else:
-        bot_response_en = None
-
-        if USE_LLM:
-            bot_response_en = generate_llm_response(processing_text, sentiment_info, response_style)
-
-        # Fall back to the existing NLP pipeline when LLM is disabled/unavailable.
-        if not bot_response_en:
-            bot_response_en = generate_nlp_response(processing_text, sentiment_info)
-
-    print(f"Bot Response (En): {bot_response_en}")
-
-    # 5. Final Output Processing
-    final_response = bot_response_en
-
-    # If user originally spoke Swahili, translate the answer back to Swahili
-    if detected_language == 'sw':
-        final_response = translate_to_swahili(bot_response_en)
-        print(f"Translated Response (Sw): {final_response}")
-
-    print(f"{'='*50}\n")
-    return final_response
-
-
-@app.route("/health")
-def health_check():
-    """Health endpoint for Flask + LLM provider (Groq, Gemini, or Ollama)."""
-    if LLM_PROVIDER == "groq":
-        llm_status = check_groq_status()
-    elif LLM_PROVIDER == "gemini":
-        llm_status = check_gemini_status()
-    else:
-        llm_status = check_ollama_status()
-
-    return jsonify({
-        "status": "ok",
-        "flask": {
-            "up": True
-        },
-        "llm": {
-            "enabled": USE_LLM,
-            "provider": LLM_PROVIDER,
-            **llm_status
-        },
-        "response_style": DEFAULT_RESPONSE_STYLE,
-        "llm_temperature": LLM_TEMPERATURE,
-        "llm_top_p": LLM_TOP_P
-    })
-
-
-@app.route("/analyze")
-def analyze_text():
-    """API endpoint to get NLP analysis of text"""
-    userText = request.args.get('msg', '')
-    if not userText:
-        return json.dumps({"error": "No text provided"})
-    
-    # Perform NLP analysis
-    sentiment = analyze_sentiment(userText)
-    entities = extract_entities(userText)
-    semantic_matches = semantic_search(userText, top_k=3)
-    best_intent, confidence, method = get_nlp_prediction(userText)
-    
-    return json.dumps({
-        "input": userText,
-        "sentiment": sentiment,
-        "entities": entities,
-        "semantic_matches": semantic_matches,
-        "predicted_intent": {
-            "intent": best_intent,
-            "confidence": confidence,
-            "method": method
-        }
-    }, indent=2)
-
-
-@app.route('/booking', methods=['GET', 'POST'])
-def booking():
-
-    if request.method == 'POST':
-
-        name = request.form['name']
-        email = request.form['email']
-        date = request.form['date']
-        time = request.form['time']
-
-        conn = sqlite3.connect('appointments.db')
-        cursor = conn.cursor()
-
-        cursor.execute("""
-        INSERT INTO appointments (name, email, date, time)
-        VALUES (?, ?, ?, ?)
-        """, (name, email, date, time))
-
-        conn.commit()
-        conn.close()
-
-        return f"""
-        <h2>Booking Successful!</h2>
-        Name: {name}<br>
-        Email: {email}<br>
-        Date: {date}<br>
-        Time: {time}
-        """
-
-    return render_template('booking.html')
-
-@app.route('/bookings_json')
-def bookings_json():
-    conn = sqlite3.connect('appointments.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM appointments")
-    rows = cursor.fetchall()
-    conn.close()
-    bookings = [{"id": r[0], "name": r[1], "email": r[2], "date": r[3], "time": r[4]} for r in rows]
-    return jsonify(bookings)
-
-@app.route('/view_bookings')
-def view_bookings():
-
-    conn = sqlite3.connect('appointments.db')
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM appointments")
-    bookings = cursor.fetchall()
-
-    conn.close()
-
-    return render_template('view_bookings.html',
-                           bookings=bookings)
-
-
-def get_mpesa_token():
-    consumer_key = os.getenv('MPESA_CONSUMER_KEY')
-    consumer_secret = os.getenv('MPESA_CONSUMER_SECRET')
-    credentials = base64.b64encode(f"{consumer_key}:{consumer_secret}".encode()).decode()
-    response = requests.get(
-        'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
-        headers={'Authorization': f'Basic {credentials}'}
-    )
-    return response.json().get('access_token')
-
-@app.route('/mpesa/stk_push', methods=['POST'])
-def stk_push():
-    try:
-        data = request.get_json()
-        phone = data.get('phone')
-        amount = data.get('amount')
-
-        # Format phone number — convert 07XX to 2547XX
-        if phone.startswith('0'):
-            phone = '254' + phone[1:]
-
-        token = get_mpesa_token()
-        shortcode = os.getenv('MPESA_SHORTCODE')
-        passkey = os.getenv('MPESA_PASSKEY')
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        password = base64.b64encode(f"{shortcode}{passkey}{timestamp}".encode()).decode()
-
-        payload = {
-            "BusinessShortCode": shortcode,
-            "Password": password,
-            "Timestamp": timestamp,
-            "TransactionType": "CustomerPayBillOnline",
-            "Amount": int(amount),
-            "PartyA": phone,
-            "PartyB": shortcode,
-            "PhoneNumber": phone,
-            "CallBackURL": os.getenv('MPESA_CALLBACK_URL'),
-            "AccountReference": "MindCare Donation",
-            "TransactionDesc": "Mental Health Support Donation"
-        }
-
-        response = requests.post(
-            'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
-            json=payload,
-            headers={
-                'Authorization': f'Bearer {token}',
-                'Content-Type': 'application/json'
-            }
-        )
-
-        result = response.json()
-
-        if result.get('ResponseCode') == '0':
-            return jsonify({'success': True, 'message': 'STK Push sent. Check your phone to complete payment.'})
-        else:
-            return jsonify({'success': False, 'message': result.get('errorMessage', 'Payment request failed.')})
-
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-
-@app.route('/mpesa/callback', methods=['POST'])
-def mpesa_callback():
-    data = request.get_json()
-    print('M-Pesa Callback:', data)
-    return jsonify({'ResultCode': 0, 'ResultDesc': 'Success'})
-if __name__ == "__main__":
-    app.run(debug=True)
