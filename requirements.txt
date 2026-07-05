@@ -1,6 +1,6 @@
 Flask==3.0.0
 flask-cors
-keras==2.13.1
+keras
 nltk==3.8.1
 numpy==1.22.2
 sacremoses
@@ -14,5 +14,5 @@ textblob
 scikit-learn
 python-dotenv
 gunicorn
-tensorflow-cpu==2.13.0
+tensorflow-cpu==2.21.0
 huggingface_hub
