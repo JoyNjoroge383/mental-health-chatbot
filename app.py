@@ -1,60 +1,35 @@
-import requests
 import base64
-from datetime import datetime
+import json
 import os
-from flask import Flask, render_template, request
+import pickle
+import random
+import re
+import urllib.error
+import urllib.request
+from datetime import datetime
+
+import numpy as np
+import requests
 import sqlite3
+import spacy
+import tensorflow as tf
+import nltk
+
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
-from transformers import MarianTokenizer
-import nltk
-import os
-import re
-import sys
-import urllib.request
-import urllib.error
+from spacy.language import Language
+from spacy_langdetect import LanguageDetector
 from dotenv import load_dotenv
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import wordnet
-import pickle
-import numpy as np
-import json
-import random
-import spacy
-from spacy.language import Language
-from spacy_langdetect import LanguageDetector
-
-# --- TFLite Interpreter ---
-# Inference runs through a lightweight TFLite interpreter instead of full
-# TensorFlow/Keras, so the deployment image stays small (~5 MB runtime vs
-# ~350 MB for tensorflow-cpu). The .h5 is converted once with
-# convert_to_tflite.py (WITHOUT post-training quantization - quantization
-# emits newer ops like FULLY_CONNECTED v12 that older runtimes can't read);
-# re-run that script whenever the model is retrained.
-#
-# Import order for the interpreter:
-#   1. tflite_runtime  - the standalone runtime used in production (Linux)
-#   2. ai_edge_litert  - its maintained successor, if installed
-#   3. tensorflow.lite - fallback for local dev machines that already have TF
-try:
-    from tflite_runtime.interpreter import Interpreter
-except ImportError:
-    try:
-        from ai_edge_litert.interpreter import Interpreter
-    except ImportError:
-        # Full TensorFlow exposes the interpreter as an attribute (tf.lite.Interpreter);
-        # `from tensorflow.lite import Interpreter` fails on TF 2.16+ (lazy module).
-        import tensorflow as tf
-        Interpreter = tf.lite.Interpreter
-
-# --- NLP Imports ---
 from textblob import TextBlob
+from transformers import MarianTokenizer, MarianMTModel
 
-# --- NLTK Setup ---
-# Load environment variables from .env for local development.
+# --- Load environment variables from .env for local development ---
 load_dotenv()
 
-# Only download if not present to speed up restart
+# --- NLTK Setup ---
+# Only download if not present, to speed up restarts
 try:
     nltk.data.find('tokenizers/punkt')
 except LookupError:
@@ -69,30 +44,17 @@ except LookupError:
 
 # Force eager load once during startup to avoid first-request lazy loader issues.
 wordnet.ensure_loaded()
-
 lemmatizer = WordNetLemmatizer()
 
 # --- Load Chatbot Model (TFLite) ---
 from download_models import download_models
+
 download_models()
 
-interpreter = Interpreter(model_path='model.tflite')
+interpreter = tf.lite.Interpreter(model_path='model.tflite')
 interpreter.allocate_tensors()
-_input_detail = interpreter.get_input_details()[0]
-_output_detail = interpreter.get_output_details()[0]
-
-
-def model_predict(x):
-    """Run one forward pass through the TFLite model.
-
-    x: array shaped (1, num_features). Returns a 2D array of class
-    probabilities, mirroring the old keras `model.predict()` output so
-    callers stay unchanged.
-    """
-    x = np.asarray(x, dtype=_input_detail['dtype'])
-    interpreter.set_tensor(_input_detail['index'], x)
-    interpreter.invoke()
-    return interpreter.get_tensor(_output_detail['index'])
+tflite_input_details = interpreter.get_input_details()
+tflite_output_details = interpreter.get_output_details()
 
 intents = json.loads(open('intents.json').read())
 words = pickle.load(open('texts.pkl', 'rb'))
@@ -102,39 +64,35 @@ classes = pickle.load(open('labels.pkl', 'rb'))
 def get_lang_detector(nlp, name):
     return LanguageDetector()
 
-# Load spacy model
+
 nlp = spacy.load("en_core_web_sm")
 
-# Register language detector (Check if already registered to avoid reload errors)
 if not Language.has_factory("language_detector"):
     Language.factory("language_detector", func=get_lang_detector)
     nlp.add_pipe('language_detector', last=True)
 
-
-# --- NLP: Sentence Transformer for Semantic Understanding ---
+# --- NLP: Sentence Transformer for Semantic Understanding (disabled) ---
 print("Sentence Transformer disabled")
 sentence_model = None
 
-# Build semantic search index from all patterns
+# Build semantic search index from all patterns (kept for future use)
 print("Building semantic search index...")
 pattern_to_intent = []  # List of (pattern, intent_tag) tuples
 all_patterns = []
 
 for intent in intents['intents']:
     for pattern in intent['patterns']:
-        if pattern.strip():  # Skip empty patterns
+        if pattern.strip():
             pattern_to_intent.append((pattern, intent['tag']))
             all_patterns.append(pattern)
 
-# Encode all patterns into embeddings
-# pattern_embeddings = sentence_model.encode(all_patterns)
 print(f"Indexed {len(all_patterns)} patterns for semantic search")
 
 
 def analyze_sentiment(text):
     """Analyze the sentiment of the text using TextBlob"""
     blob = TextBlob(text)
-    polarity = blob.sentiment.polarity  # -1 to 1
+    polarity = blob.sentiment.polarity        # -1 to 1
     subjectivity = blob.sentiment.subjectivity  # 0 to 1
 
     if polarity < -0.3:
@@ -147,21 +105,19 @@ def analyze_sentiment(text):
     return {
         "polarity": polarity,
         "subjectivity": subjectivity,
-        "sentiment": sentiment
+        "sentiment": sentiment,
     }
 
 
 def extract_entities(text):
     doc = nlp(text)
     entities = []
-
     for ent in doc.ents:
         entities.append({
             "text": ent.text,
             "label": ent.label_,
-            "description": spacy.explain(ent.label_)
+            "description": spacy.explain(ent.label_),
         })
-
     return entities
 
 
@@ -174,63 +130,53 @@ def get_nlp_prediction(sentence):
     Hybrid prediction using both bag-of-words model and semantic search.
     Returns the best matching intent with confidence.
     """
-    # Check for negation - important for handling "not ok", "don't feel good", etc.
-    negation_words = ["not", "n't", "don't", "dont", "doesn't", "doesnt", "never", "no", "can't", "cant", "won't", "wont", "isn't", "isnt", "aren't", "arent", "wasn't", "wasnt", "weren't", "werent"]
+    negation_words = [
+        "not", "n't", "don't", "dont", "doesn't", "doesnt", "never", "no",
+        "can't", "cant", "won't", "wont", "isn't", "isnt", "aren't", "arent",
+        "wasn't", "wasnt", "weren't", "werent",
+    ]
     sentence_lower = sentence.lower()
     has_negation = any(neg in sentence_lower for neg in negation_words)
 
-    # Positive feeling words that when negated should flip to sad
     positive_words = ["ok", "okay", "good", "fine", "great", "well", "happy", "alright"]
     has_positive_word = any(pos in sentence_lower for pos in positive_words)
 
-    # 1. Get bag-of-words prediction
     bow_results = predict_class(sentence)
-
-    # 2. Get semantic search results
     semantic_results = semantic_search(sentence, top_k=3)
 
-    # 3. Combine results - semantic search gets priority for better understanding
     if semantic_results and semantic_results[0]['score'] > 0.5:
-        # High semantic confidence - use semantic result
         best_intent = semantic_results[0]['intent']
         confidence = semantic_results[0]['score']
         method = "semantic"
     elif bow_results and float(bow_results[0]['probability']) > 0.3:
-        # Decent bag-of-words confidence
         best_intent = bow_results[0]['intent']
         confidence = float(bow_results[0]['probability'])
         method = "bow"
     elif semantic_results:
-        # Fall back to best semantic match
         best_intent = semantic_results[0]['intent']
         confidence = semantic_results[0]['score']
         method = "semantic_fallback"
     else:
         return None, 0, "none"
 
-    # Handle negation: If user says "not ok", "don't feel good", etc., flip happy to sad
     if has_negation and has_positive_word and best_intent == "happy":
         best_intent = "sad"
         method = method + "_negation_corrected"
-        print(f"  [Negation detected] Flipped intent from 'happy' to 'sad'")
+        print(" [Negation detected] Flipped intent from 'happy' to 'sad'")
 
     return best_intent, confidence, method
 
 
-# --- TRANSLATION MODELS ---
-from transformers import MarianMTModel
-
-# --- Model Saving and Loading ---
+# --- Translation Models ---
 def download_and_save_models():
     """Downloads and saves the translation models to a local directory."""
     models_dir = "models"
     if not os.path.exists(models_dir):
         os.makedirs(models_dir)
 
-    # Define model names and their local paths
     model_map = {
         "Rogendo/en-sw": os.path.join(models_dir, "en-sw"),
-        "Rogendo/sw-en": os.path.join(models_dir, "sw-en")
+        "Rogendo/sw-en": os.path.join(models_dir, "sw-en"),
     }
 
     for model_name, local_path in model_map.items():
@@ -244,38 +190,33 @@ def download_and_save_models():
                 print(f"Successfully saved {model_name}.")
             except Exception as e:
                 print(f"Error downloading {model_name}: {e}")
-                # If download fails, we'll have to rely on the app failing until connection is restored.
-                # You could add more robust error handling here if needed.
+
     return model_map
 
-# Download models on startup if they don't exist
-local_model_paths = download_and_save_models()
 
-# Load models from local paths
+local_model_paths = download_and_save_models()
 en_sw_path = local_model_paths["Rogendo/en-sw"]
 sw_en_path = local_model_paths["Rogendo/sw-en"]
 
 print("Loading translation models from local cache...")
 try:
-    # 1. English to Swahili
     eng_swa_tokenizer = MarianTokenizer.from_pretrained(en_sw_path)
     eng_swa_model = MarianMTModel.from_pretrained(en_sw_path)
 
-    # 2. Swahili to English
     swa_eng_tokenizer = MarianTokenizer.from_pretrained(sw_en_path)
     swa_eng_model = MarianMTModel.from_pretrained(sw_en_path)
+
     print("Translation models loaded successfully.")
 except Exception as e:
     print(f"FATAL: Could not load translation models from cache: {e}")
     print("The application may not function correctly without these models.")
-    # Assign None to models to handle failures gracefully if needed, though it might be better to fail fast.
     eng_swa_tokenizer, eng_swa_model = None, None
     swa_eng_tokenizer, swa_eng_model = None, None
 
 
 def translate_to_swahili(text):
-    # Safe check: if text is empty or model failed to load, return empty
-    if not text or not eng_swa_model: return ""
+    if not text or not eng_swa_model:
+        return ""
     try:
         inputs = eng_swa_tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=128)
         translated = eng_swa_model.generate(**inputs)
@@ -284,9 +225,10 @@ def translate_to_swahili(text):
         print(f"Translation Error (En->Sw): {e}")
         return text
 
-# 2. Swahili to English
+
 def translate_to_english(text):
-    if not text or not swa_eng_model: return ""
+    if not text or not swa_eng_model:
+        return ""
     try:
         inputs = swa_eng_tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=128)
         translated = swa_eng_model.generate(**inputs)
@@ -296,12 +238,12 @@ def translate_to_english(text):
         return text
 
 
-# --- CHATBOT LOGIC ---
-
+# --- Chatbot Logic ---
 def clean_up_sentence(sentence):
     sentence_words = nltk.word_tokenize(sentence)
     sentence_words = [lemmatizer.lemmatize(word.lower()) for word in sentence_words]
     return sentence_words
+
 
 def bow(sentence, words, show_details=True):
     sentence_words = clean_up_sentence(sentence)
@@ -312,11 +254,15 @@ def bow(sentence, words, show_details=True):
                 bag[i] = 1
     return np.array(bag)
 
+
 def predict_class(sentence, model=None):
     p = bow(sentence, words, show_details=False)
-    res = model_predict(np.array([p]))[0]
+    input_data = np.array([p], dtype=np.float32)
+    interpreter.set_tensor(tflite_input_details[0]['index'], input_data)
+    interpreter.invoke()
+    res = interpreter.get_tensor(tflite_output_details[0]['index'])[0]
 
-    ERROR_THRESHOLD = 0.1  # Lowered threshold for better matching
+    ERROR_THRESHOLD = 0.1
     results = [[i, r] for i, r in enumerate(res) if r > ERROR_THRESHOLD]
     results.sort(key=lambda x: x[1], reverse=True)
 
@@ -325,16 +271,21 @@ def predict_class(sentence, model=None):
         return_list.append({"intent": classes[r[0]], "probability": str(r[1])})
     return return_list
 
+
 def getResponse(ints, intents_json):
     if ints:
         tag = ints[0]['intent']
         confidence = float(ints[0]['probability'])
         list_of_intents = intents_json['intents']
+        result = None
         for i in list_of_intents:
             if i['tag'] == tag:
                 result = random.choice(i['responses'])
                 break
-        # If confidence is low, add a soft prompt for clarification
+
+        if result is None:
+            return "I'm not sure I fully understand. Could you tell me more about how you're feeling?"
+
         if confidence < 0.3:
             result = result + " (If this doesn't address your concern, please tell me more about how you're feeling.)"
         return result
@@ -355,39 +306,30 @@ def generate_nlp_response(user_text, sentiment_info):
     Generate a response using NLP-enhanced understanding.
     Combines semantic search, sentiment analysis, and entity recognition.
     """
-    # Get hybrid NLP prediction
     best_intent, confidence, method = get_nlp_prediction(user_text)
+    print(f" NLP Method: {method}, Intent: {best_intent}, Confidence: {confidence:.3f}")
+    print(f" Sentiment: {sentiment_info['sentiment']} (polarity: {sentiment_info['polarity']:.2f})")
 
-    print(f"  NLP Method: {method}, Intent: {best_intent}, Confidence: {confidence:.3f}")
-    print(f"  Sentiment: {sentiment_info['sentiment']} (polarity: {sentiment_info['polarity']:.2f})")
-
-    # Extract entities for context
     entities = extract_entities(user_text)
     if entities:
-        print(f"  Entities: {[e['text'] + ' (' + e['label'] + ')' for e in entities]}")
+        print(f" Entities: {[e['text'] + ' (' + e['label'] + ')' for e in entities]}")
 
-    # Get base response
     if best_intent and confidence > 0.25:
         response = get_response_by_intent(best_intent, intents)
-
         if response:
-            # Enhance response based on sentiment
             if sentiment_info['sentiment'] == 'negative' and sentiment_info['polarity'] < -0.5:
-                # User seems very distressed
                 empathy_prefixes = [
                     "I can sense you're going through a difficult time. ",
                     "I hear that you're struggling. ",
-                    "I understand this is hard for you. "
+                    "I understand this is hard for you. ",
                 ]
                 response = random.choice(empathy_prefixes) + response
 
-            # Add confidence note for lower confidence matches
             if confidence < 0.4:
                 response += " Feel free to tell me more if I didn't fully address your concern."
 
             return response
 
-    # Fallback response with sentiment awareness
     if sentiment_info['sentiment'] == 'negative':
         return "I can tell something is troubling you. I'm here to listen. Could you tell me more about what's on your mind?"
     elif sentiment_info['sentiment'] == 'positive':
@@ -396,26 +338,23 @@ def generate_nlp_response(user_text, sentiment_info):
         return "I'm here to help. Could you tell me more about what you'd like to discuss?"
 
 
-# --- LLM CONFIGURATION (Groq, Gemini, or Ollama) ---
+# --- LLM Configuration (Groq, Gemini, or Ollama) ---
 USE_LLM = os.getenv("USE_LLM", "true").lower() == "true"
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()  # "groq", "gemini", or "ollama"
 
-# Groq Configuration (recommended - free, fast, OpenAI-compatible)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# Some providers (Groq included) sit behind bot-protection that blocks
-# Python's default urllib User-Agent ("Python-urllib/3.x"). Sending a
-# normal browser-like User-Agent avoids spurious 403 Forbidden responses.
-DEFAULT_HTTP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+DEFAULT_HTTP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+)
 
-# Gemini Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-pro")
 GEMINI_CHAT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-# Ollama Configuration (local)
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b-instruct")
 OLLAMA_CHAT_URL = os.getenv("OLLAMA_CHAT_URL", "http://localhost:11434/api/chat")
 OLLAMA_TAGS_URL = os.getenv("OLLAMA_TAGS_URL", "http://localhost:11434/api/tags")
@@ -436,7 +375,7 @@ MENTAL_HEALTH_SYSTEM_PROMPT = (
 STYLE_INSTRUCTIONS = {
     "balanced": "Give a warm, practical response in about 4-7 sentences with concrete next steps.",
     "concise": "Keep the response brief (2-4 sentences), direct, and practical.",
-    "therapeutic": "Use a more reflective, validating tone and include 1-2 grounding or coping exercises."
+    "therapeutic": "Use a more reflective, validating tone and include 1-2 grounding or coping exercises.",
 }
 
 CRISIS_PATTERNS = [
@@ -463,13 +402,11 @@ def contains_crisis_language(raw_text, processing_text):
     """Detect high-risk language using regex, multilingual phrases, and intent confidence."""
     text_candidates = [raw_text or "", processing_text or ""]
 
-    # Regex and phrase detection across original + translated text.
     for text in text_candidates:
         for pattern in CRISIS_PATTERNS:
             if pattern.search(text):
                 return True
 
-    # Intent-based detection from existing classifier for additional safety coverage.
     intent, confidence, _ = get_nlp_prediction(processing_text or "")
     if intent == "suicide" and confidence >= 0.25:
         return True
@@ -501,29 +438,26 @@ def generate_groq_response(user_text, sentiment_info, response_style=None):
             f"Style instruction: {style_instruction}\n"
             "Respond with emotional support and practical next steps."
         )
-
         payload = {
             "model": GROQ_MODEL,
             "messages": [
                 {"role": "system", "content": MENTAL_HEALTH_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": user_prompt},
             ],
             "temperature": LLM_TEMPERATURE,
             "top_p": LLM_TOP_P,
-            "max_tokens": 500
+            "max_tokens": 500,
         }
-
         req = urllib.request.Request(
             GROQ_CHAT_URL,
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {GROQ_API_KEY}",
-                "User-Agent": DEFAULT_HTTP_USER_AGENT
+                "User-Agent": DEFAULT_HTTP_USER_AGENT,
             },
-            method="POST"
+            method="POST",
         )
-
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS) as response:
             response_text = response.read().decode("utf-8")
             response_data = json.loads(response_text)
@@ -532,7 +466,6 @@ def generate_groq_response(user_text, sentiment_info, response_style=None):
             message = response_data["choices"][0].get("message", {})
             content = message.get("content", "").strip()
             return content or None
-
         return None
 
     except urllib.error.HTTPError as e:
@@ -564,34 +497,31 @@ def generate_gemini_response(user_text, sentiment_info, response_style=None):
             f"Style instruction: {style_instruction}\n"
             "Respond with emotional support and practical next steps."
         )
-
         url = GEMINI_CHAT_URL.format(model=GEMINI_MODEL) + f"?key={GEMINI_API_KEY}"
         payload = {
             "contents": [
                 {
                     "parts": [
                         {"text": MENTAL_HEALTH_SYSTEM_PROMPT},
-                        {"text": user_prompt}
+                        {"text": user_prompt},
                     ]
                 }
             ],
             "generationConfig": {
                 "temperature": LLM_TEMPERATURE,
                 "topP": LLM_TOP_P,
-                "maxOutputTokens": 500
-            }
+                "maxOutputTokens": 500,
+            },
         }
-
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "User-Agent": DEFAULT_HTTP_USER_AGENT
+                "User-Agent": DEFAULT_HTTP_USER_AGENT,
             },
-            method="POST"
+            method="POST",
         )
-
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS) as response:
             response_text = response.read().decode("utf-8")
             response_data = json.loads(response_text)
@@ -601,7 +531,6 @@ def generate_gemini_response(user_text, sentiment_info, response_style=None):
             parts = content.get("parts", [])
             if parts:
                 return parts[0].get("text", "").strip() or None
-
         return None
 
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
@@ -619,27 +548,24 @@ def generate_ollama_response(user_text, sentiment_info, response_style=None):
             f"Style instruction: {style_instruction}\n"
             "Respond with emotional support and practical next steps."
         )
-
         payload = {
             "model": OLLAMA_MODEL,
             "stream": False,
             "messages": [
                 {"role": "system", "content": MENTAL_HEALTH_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": user_prompt},
             ],
             "options": {
                 "temperature": LLM_TEMPERATURE,
-                "top_p": LLM_TOP_P
-            }
+                "top_p": LLM_TOP_P,
+            },
         }
-
         req = urllib.request.Request(
             OLLAMA_CHAT_URL,
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
-            method="POST"
+            method="POST",
         )
-
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS) as response:
             response_text = response.read().decode("utf-8")
             response_data = json.loads(response_text)
@@ -664,7 +590,6 @@ def generate_llm_response(user_text, sentiment_info, response_style=None):
 
 
 def check_groq_status():
-    """Check Groq API reachability."""
     status = {
         "provider": "groq",
         "model": GROQ_MODEL,
@@ -672,40 +597,34 @@ def check_groq_status():
         "api_key_configured": bool(GROQ_API_KEY),
         "error": None,
     }
-
     if not GROQ_API_KEY:
         status["error"] = "Groq API key not configured"
         return status
-
     try:
         payload = {
             "model": GROQ_MODEL,
             "messages": [{"role": "user", "content": "test"}],
-            "max_tokens": 10
+            "max_tokens": 10,
         }
-
         req = urllib.request.Request(
             GROQ_CHAT_URL,
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {GROQ_API_KEY}",
-                "User-Agent": DEFAULT_HTTP_USER_AGENT
+                "User-Agent": DEFAULT_HTTP_USER_AGENT,
             },
-            method="POST"
+            method="POST",
         )
-
         with urllib.request.urlopen(req, timeout=10) as response:
             response.read()
         status["service_reachable"] = True
     except Exception as e:
         status["error"] = str(e)
-
     return status
 
 
 def check_gemini_status():
-    """Check Google Gemini API reachability."""
     status = {
         "provider": "gemini",
         "model": GEMINI_MODEL,
@@ -713,13 +632,10 @@ def check_gemini_status():
         "api_key_configured": bool(GEMINI_API_KEY),
         "error": None,
     }
-
     if not GEMINI_API_KEY:
         status["error"] = "Gemini API key not configured"
         return status
-
     try:
-        # Test endpoint
         url = GEMINI_CHAT_URL.format(model=GEMINI_MODEL) + f"?key={GEMINI_API_KEY}"
         payload = {"contents": [{"parts": [{"text": "test"}]}]}
         req = urllib.request.Request(
@@ -727,22 +643,19 @@ def check_gemini_status():
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "User-Agent": DEFAULT_HTTP_USER_AGENT
+                "User-Agent": DEFAULT_HTTP_USER_AGENT,
             },
-            method="POST"
+            method="POST",
         )
-
         with urllib.request.urlopen(req, timeout=10) as response:
             response.read()
         status["service_reachable"] = True
     except Exception as e:
         status["error"] = str(e)
-
     return status
 
 
 def check_ollama_status():
-    """Check Ollama API reachability and whether configured model is available."""
     status = {
         "provider": "ollama",
         "chat_url": OLLAMA_CHAT_URL,
@@ -752,7 +665,6 @@ def check_ollama_status():
         "model_available": False,
         "error": None,
     }
-
     try:
         req = urllib.request.Request(OLLAMA_TAGS_URL, method="GET")
         with urllib.request.urlopen(req, timeout=10) as response:
@@ -764,14 +676,68 @@ def check_ollama_status():
         status["model_available"] = any(name.startswith(OLLAMA_MODEL) for name in names)
     except Exception as e:
         status["error"] = str(e)
-
     return status
+
+
+# --- Database setup ---
+DB_PATH = os.getenv("DATABASE_PATH", "appointments.db")
+
+
+def init_db():
+    """Create the appointments table if it doesn't exist yet.
+    This was missing in the original app, which caused /booking to
+    crash on a fresh deploy with 'no such table: appointments'."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS appointments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
 
 
 # --- FLASK APP ---
 app = Flask(__name__)
 app.static_folder = 'static'
-CORS(app)  # Enable CORS for all routes
+
+# ---------------------------------------------------------------------------
+# CORS CONFIGURATION
+# ---------------------------------------------------------------------------
+# The original app just did CORS(app), which allows every origin. That works
+# but is loose for a production app that talks to M-Pesa and stores personal
+# data (name/email) via /booking. Instead we explicitly allow:
+#   - the deployed Vercel frontend (set via FRONTEND_URL env var)
+#   - any Vercel preview deployment for this project (*.vercel.app)
+#   - localhost dev servers (Vite default ports)
+# and enable credentials so cookies/auth headers can be sent if you add auth
+# later. Set FRONTEND_URL in your backend's environment (Render/Railway/etc.)
+# to your real Vercel production URL, e.g.:
+#   FRONTEND_URL=https://mental-health-chatbot-seven-gold.vercel.app
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://mental-health-chatbot-seven-gold.vercel.app")
+
+ALLOWED_ORIGINS = [
+    FRONTEND_URL,
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    re.compile(r"^https://.*\.vercel\.app$"),  # any Vercel preview/prod deployment
+]
+
+CORS(
+    app,
+    resources={r"/*": {"origins": ALLOWED_ORIGINS}},
+    supports_credentials=True,
+    methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+)
 
 
 @app.route("/")
@@ -797,8 +763,6 @@ def get_bot_response():
 
     # 2. Prepare text for processing (Must be English for the chatbot model)
     processing_text = userText
-
-    # If user spoke Swahili, translate to English first
     if detected_language == 'sw':
         processing_text = translate_to_english(userText)
         print(f"Translated to English: {processing_text}")
@@ -813,8 +777,6 @@ def get_bot_response():
         bot_response_en = None
         if USE_LLM:
             bot_response_en = generate_llm_response(processing_text, sentiment_info, response_style)
-
-        # Fall back to the existing NLP pipeline when LLM is disabled/unavailable.
         if not bot_response_en:
             bot_response_en = generate_nlp_response(processing_text, sentiment_info)
 
@@ -822,14 +784,11 @@ def get_bot_response():
 
     # 5. Final Output Processing
     final_response = bot_response_en
-
-    # If user originally spoke Swahili, translate the answer back to Swahili
     if detected_language == 'sw':
         final_response = translate_to_swahili(bot_response_en)
         print(f"Translated Response (Sw): {final_response}")
 
     print(f"{'='*50}\n")
-
     return final_response
 
 
@@ -845,17 +804,15 @@ def health_check():
 
     return jsonify({
         "status": "ok",
-        "flask": {
-            "up": True
-        },
+        "flask": {"up": True},
         "llm": {
             "enabled": USE_LLM,
             "provider": LLM_PROVIDER,
-            **llm_status
+            **llm_status,
         },
         "response_style": DEFAULT_RESPONSE_STYLE,
         "llm_temperature": LLM_TEMPERATURE,
-        "llm_top_p": LLM_TOP_P
+        "llm_top_p": LLM_TOP_P,
     })
 
 
@@ -863,17 +820,15 @@ def health_check():
 def analyze_text():
     """API endpoint to get NLP analysis of text"""
     userText = request.args.get('msg', '')
-
     if not userText:
-        return json.dumps({"error": "No text provided"})
+        return jsonify({"error": "No text provided"}), 400
 
-    # Perform NLP analysis
     sentiment = analyze_sentiment(userText)
     entities = extract_entities(userText)
     semantic_matches = semantic_search(userText, top_k=3)
     best_intent, confidence, method = get_nlp_prediction(userText)
 
-    return json.dumps({
+    return jsonify({
         "input": userText,
         "sentiment": sentiment,
         "entities": entities,
@@ -881,20 +836,29 @@ def analyze_text():
         "predicted_intent": {
             "intent": best_intent,
             "confidence": confidence,
-            "method": method
-        }
-    }, indent=2)
+            "method": method,
+        },
+    })
 
 
 @app.route('/booking', methods=['GET', 'POST'])
 def booking():
     if request.method == 'POST':
-        name = request.form['name']
-        email = request.form['email']
-        date = request.form['date']
-        time = request.form['time']
+        # Accept both form posts (legacy HTML) and JSON posts (React frontend)
+        data = request.get_json(silent=True) or request.form
 
-        conn = sqlite3.connect('appointments.db')
+        name = (data.get('name') or '').strip()
+        email = (data.get('email') or '').strip()
+        date = (data.get('date') or '').strip()
+        time = (data.get('time') or '').strip()
+
+        if not all([name, email, date, time]):
+            error_msg = "All fields (name, email, date, time) are required."
+            if request.is_json:
+                return jsonify({"success": False, "message": error_msg}), 400
+            return f"<h2>Booking Failed</h2>{error_msg}", 400
+
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO appointments (name, email, date, time)
@@ -902,6 +866,9 @@ def booking():
         """, (name, email, date, time))
         conn.commit()
         conn.close()
+
+        if request.is_json:
+            return jsonify({"success": True, "message": "Booking successful!"})
 
         return f"""
         <h2>Booking Successful!</h2>
@@ -916,26 +883,27 @@ def booking():
 
 @app.route('/bookings_json')
 def bookings_json():
-    conn = sqlite3.connect('appointments.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM appointments")
     rows = cursor.fetchall()
     conn.close()
 
-    bookings = [{"id": r[0], "name": r[1], "email": r[2], "date": r[3], "time": r[4]} for r in rows]
+    bookings = [
+        {"id": r[0], "name": r[1], "email": r[2], "date": r[3], "time": r[4]}
+        for r in rows
+    ]
     return jsonify(bookings)
 
 
 @app.route('/view_bookings')
 def view_bookings():
-    conn = sqlite3.connect('appointments.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM appointments")
     bookings = cursor.fetchall()
     conn.close()
-
-    return render_template('view_bookings.html',
-                           bookings=bookings)
+    return render_template('view_bookings.html', bookings=bookings)
 
 
 def get_mpesa_token():
@@ -945,7 +913,8 @@ def get_mpesa_token():
 
     response = requests.get(
         'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
-        headers={'Authorization': f'Basic {credentials}'}
+        headers={'Authorization': f'Basic {credentials}'},
+        timeout=30,
     )
     return response.json().get('access_token')
 
@@ -954,14 +923,23 @@ def get_mpesa_token():
 def stk_push():
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': 'No JSON body provided.'}), 400
+
         phone = data.get('phone')
         amount = data.get('amount')
+
+        if not phone or not amount:
+            return jsonify({'success': False, 'message': 'phone and amount are required.'}), 400
 
         # Format phone number — convert 07XX to 2547XX
         if phone.startswith('0'):
             phone = '254' + phone[1:]
 
         token = get_mpesa_token()
+        if not token:
+            return jsonify({'success': False, 'message': 'Could not authenticate with M-Pesa.'}), 502
+
         shortcode = os.getenv('MPESA_SHORTCODE')
         passkey = os.getenv('MPESA_PASSKEY')
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
@@ -978,7 +956,7 @@ def stk_push():
             "PhoneNumber": phone,
             "CallBackURL": os.getenv('MPESA_CALLBACK_URL'),
             "AccountReference": "MindCare Donation",
-            "TransactionDesc": "Mental Health Support Donation"
+            "TransactionDesc": "Mental Health Support Donation",
         }
 
         response = requests.post(
@@ -986,18 +964,19 @@ def stk_push():
             json=payload,
             headers={
                 'Authorization': f'Bearer {token}',
-                'Content-Type': 'application/json'
-            }
+                'Content-Type': 'application/json',
+            },
+            timeout=30,
         )
-
         result = response.json()
+
         if result.get('ResponseCode') == '0':
             return jsonify({'success': True, 'message': 'STK Push sent. Check your phone to complete payment.'})
         else:
             return jsonify({'success': False, 'message': result.get('errorMessage', 'Payment request failed.')})
 
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.route('/mpesa/callback', methods=['POST'])
@@ -1007,5 +986,10 @@ def mpesa_callback():
     return jsonify({'ResultCode': 0, 'ResultDesc': 'Success'})
 
 
+# Make sure the appointments table exists before the app serves any requests.
+init_db()
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.getenv("PORT", 5000))
+    debug = os.getenv("FLASK_DEBUG", "0") == "1"
+    app.run(host="0.0.0.0", port=port, debug=debug)
