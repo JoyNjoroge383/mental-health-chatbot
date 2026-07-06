@@ -3,7 +3,7 @@
 //   - Production build: talk to the deployed Render backend.
 //   - Either can be overridden with VITE_API_BASE_URL (e.g. in a .env file).
 const DEV_API_BASE_URL = 'http://127.0.0.1:5000'
-
+const PROD_API_BASE_URL = 'https://mental-health-chatbot-4-yh9c.onrender.com'
 
 const fallbackBaseUrl = import.meta.env.DEV ? DEV_API_BASE_URL : PROD_API_BASE_URL
 

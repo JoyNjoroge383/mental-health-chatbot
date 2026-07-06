@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { apiUrl } from "../lib/api";
 
 export default function AppointmentList() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/bookings_json")
+    fetch(apiUrl("/bookings_json"))
       .then((r) => r.json())
       .then((data) => {
         setBookings(data);

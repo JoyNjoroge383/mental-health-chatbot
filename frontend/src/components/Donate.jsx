@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { apiUrl } from "../lib/api";
 
 const PRESET_AMOUNTS = [100, 500, 1000, 2000, 5000];
 
@@ -27,7 +28,7 @@ export default function Donate() {
     setStatus(null);
 
     try {
-      const res = await fetch("/mpesa/stk_push", {
+      const res = await fetch(apiUrl("/mpesa/stk_push"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone, amount }),

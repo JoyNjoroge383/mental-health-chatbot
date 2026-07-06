@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { apiUrl } from "../lib/api";
 
 export default function BookAppointment() {
   const [form, setForm] = useState({ name: "", email: "", date: "", time: "" });
@@ -16,7 +17,7 @@ export default function BookAppointment() {
       body.append("date", form.date);
       body.append("time", form.time);
 
-      const res = await fetch("/booking", {
+      const res = await fetch(apiUrl("/booking"), {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),
