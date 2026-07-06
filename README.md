@@ -1,27 +1,38 @@
-# 🧠 MindCare - Mental Health Chatbot
+# 🧠 MindCare — Mental Health Chatbot
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Mental-Health-blue" alt="Mental Health">
-  <img src="https://img.shields.io/badge/Python-3.10+-green" alt="Python">
-  <img src="https://img.shields.io/badge/React-18+-61DAFB" alt="React">
-  <img src="https://img.shields.io/badge/TailwindCSS-3.0-38B2AC" alt="Tailwind">
-  <img src="https://img.shields.io/github/stars/Rogendo/Mental-health-Chatbot" alt="Stars">
-  <img src="https://img.shields.io/github/forks/Rogendo/Mental-health-Chatbot" alt="Forks">
+  <img src="https://img.shields.io/badge/Python-3.9+-green" alt="Python">
+  <img src="https://img.shields.io/badge/Flask-3.0-black" alt="Flask">
+  <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React">
+  <img src="https://img.shields.io/badge/Vite-7-646CFF" alt="Vite">
+  <img src="https://img.shields.io/badge/TailwindCSS-4-38B2AC" alt="Tailwind">
 </p>
 
-<p align="center">
-  <img src="https://socialify.git.ci/Rogendo/Mental-health-Chatbot/image?language=1&owner=1&name=1&stargazers=1&theme=Light" alt="project-image">
-</p>
+## 📖 What is this project?
 
-## 📖 Description
+**MindCare** is an AI-powered mental health chatbot that offers a safe, judgment-free
+space to talk through anxiety, stress, or a difficult day — any time. It pairs an
+empathetic conversational AI with practical tools: appointment booking, a mood
+journal, a therapist directory, and donation support.
 
-MindCare is an AI-powered mental health chatbot designed to provide emotional support and assistance to individuals struggling with mental health issues. It uses advanced NLP techniques including:
+It is a full-stack web app:
 
-- **Semantic Search** - Understands context and meaning, not just keywords
-- **Sentiment Analysis** - Detects emotional tone in messages
-- **Entity Recognition** - Identifies key topics and concerns
-- **Negation Handling** - Properly understands phrases like "I am not okay"
-- **Multilingual Support** - English ↔ Swahili translation
+- **Backend** — a Flask API that generates responses through a Large Language Model
+  (Groq by default, with Google Gemini and Ollama as alternatives) and falls back to
+  a local TensorFlow-Lite intent-classification model plus an NLP pipeline whenever
+  the LLM is unavailable.
+- **Frontend** — a React + Vite single-page app (Tailwind CSS) with a floating chat
+  widget and pages for booking, appointments, journaling, therapists, and donations.
+
+### How the chatbot understands you
+
+- **LLM responses** — context-aware, supportive replies from Groq / Gemini / Ollama.
+- **Intent classification** — a local TFLite model trained on `intents.json`.
+- **Sentiment analysis** — detects emotional tone (TextBlob).
+- **Entity & language detection** — spaCy + `langdetect`.
+- **Multilingual** — English ↔ Swahili translation via Hugging Face `transformers`.
+- **Safety first** — crisis / self-harm phrases are caught and answered with a
+  safety-first response *before* any LLM generation.
 
 ---
 
@@ -29,310 +40,236 @@ MindCare is an AI-powered mental health chatbot designed to provide emotional su
 
 | Feature | Description |
 |---------|-------------|
-| 🗣️ **Conversational AI** | Natural dialogue using deep learning intent classification |
-| 🌍 **Multilingual** | Supports English and Swahili with automatic translation |
-| 🧠 **NLP-Powered** | Sentence transformers for semantic understanding |
-| 💬 **Sentiment Analysis** | Detects user mood and emotional state |
-| 🎨 **Modern UI** | Beautiful React + Tailwind CSS interface |
-| ⚡ **Fast** | Vite-powered frontend for instant hot reload |
+| 🗣️ **Conversational AI** | LLM-backed replies with a local NLP fallback |
+| 🧠 **Sentiment & intent** | Detects mood and classifies user intent |
+| 🌍 **Multilingual** | English and Swahili with automatic translation |
+| 🗓️ **Appointment booking** | Book a session; get a confirmation modal (stored in SQLite) |
+| 💚 **Donations** | M-Pesa STK-push integration |
+| 📓 **Journal & therapists** | Mood journaling and a therapist directory |
+| 🎨 **Modern UI** | React 19 + Tailwind CSS v4, Vite-powered |
 
 ---
 
-## 📋 Prerequisites
+## 📋 Requirements
 
-Before installation, ensure you have the following installed:
-
-| Requirement | Version | Check Command |
-|-------------|---------|---------------|
-| **Python** | 3.10+ | `python --version` |
+| Requirement | Version | Check |
+|-------------|---------|-------|
+| **Python** | 3.9+ | `python --version` |
 | **pip** | Latest | `pip --version` |
 | **Node.js** | 18+ | `node --version` |
 | **npm** | 9+ | `npm --version` |
 | **Git** | Latest | `git --version` |
 
+### Backend Python dependencies (`requirements.txt`)
+
+- **Web:** Flask, flask-cors, gunicorn, python-dotenv
+- **ML / NLP:** numpy, scikit-learn, nltk, textblob, spaCy (+ `en_core_web_sm`),
+  langdetect, transformers, sentencepiece, sacremoses, huggingface_hub
+- **Inference:** `tflite-runtime` (Linux only — see note below)
+
+> **TensorFlow note:** production inference uses the lightweight `tflite-runtime`
+> (~5 MB), whose wheels are published for **Linux only**. On Windows/macOS local dev,
+> inference falls back to the interpreter bundled with a full TensorFlow install. The
+> `model.h5 → model.tflite` conversion (`convert_to_tflite.py`) is a one-time local
+> step that requires full TensorFlow and is **not** part of `requirements.txt`.
+
+### An LLM provider (optional but recommended)
+
+Set one up so the bot gives richer responses (otherwise it uses the local NLP fallback):
+
+- **Groq** *(default)* — free, fast. Get a key at <https://console.groq.com/keys>.
+- **Google Gemini** — get a key at <https://ai.google.dev>.
+- **Ollama** — fully local. Install from <https://ollama.com>, then
+  `ollama pull qwen2.5:14b-instruct`.
+
 ---
 
 ## 🚀 Installation
 
-### Step 1: Clone the Repository
+### 1. Clone
 
 ```bash
-git clone https://github.com/Rogendo/Mental-health-Chatbot.git
-cd Mental-health-Chatbot
+git clone <your-repo-url>
+cd mental_health-chatbot
 ```
 
-### Step 2: Backend Setup (Flask + Python)
+### 2. Backend (Flask + Python)
 
-#### Create and activate virtual environment:
-
-**Linux/macOS:**
 ```bash
+# Create & activate a virtual environment
 python -m venv venv
-source venv/bin/activate
-```
+source venv/bin/activate      # Linux/macOS
+.\venv\Scripts\activate       # Windows
 
-**Windows:**
-```bash
-python -m venv venv
-.\venv\Scripts\activate
-```
-
-#### Install Python dependencies:
-
-```bash
+# Install dependencies (spaCy's English model is pinned in requirements.txt)
 pip install -r requirements.txt
+
+# Download the trained model files (model.h5, texts.pkl, labels.pkl, intents.json)
+python download_models.py
 ```
 
-#### Download spaCy language model:
+### 3. Environment variables
 
 ```bash
-python -m spacy download en_core_web_sm
-```
-
-#### (Optional) Retrain the model:
-
-```bash
-python training.py
-```
-
-### Step 3: Frontend Setup (React + Vite)
-
-```bash
-cd frontend
-npm install
-```
-
----
-
-## 🔧 Setup with LLM Integration (New Developers)
-
-This project now includes **Ollama + Qwen LLM** for enhanced mental health responses. Here's what you need to know:
-
-### System Requirements (Beyond Python/Node)
-
-You'll need **Ollama** (the LLM service) running separately:
-
-1. **Install Ollama**
-   - Download from: https://ollama.com/
-   - Follow the installer for your OS (Linux, macOS, Windows)
-   - Verify installation: `ollama --version`
-
-2. **Copy Environment Configuration**
-   ```bash
-   cp .env.example .env
-   # Edit .env if needed (defaults work for local development)
-   ```
-
-3. **Pull the LLM Model** (one-time, ~8-10GB)
-   ```bash
-   ollama pull qwen2.5:14b-instruct
-   # Verify: ollama list
-   ```
-
-### Initial Setup Summary
-
-```bash
-# 1. Clone and backend setup (as above)
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python -m spacy download en_core_web_sm
-
-# 2. Frontend setup
-cd frontend
-npm install
-cd ..
-
-# 3. Install Ollama (see above)
-
-# 4. Copy environment file
 cp .env.example .env
 ```
 
----
+Then edit `.env` and set at least one LLM provider key (defaults to Groq):
 
-## 🏃 Running the Application
+```env
+FLASK_DEBUG=1
 
-You need to run **both** the backend and frontend servers.
+# LLM (choose provider: groq | gemini | ollama)
+USE_LLM=true
+LLM_PROVIDER=groq
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=openai/gpt-oss-120b
 
-### Terminal 1: Start Backend Server
+# CORS: the frontend origin allowed to call this backend (production)
+FRONTEND_URL=https://your-frontend.vercel.app
+
+# M-Pesa (only needed for donations)
+MPESA_CONSUMER_KEY=...
+MPESA_CONSUMER_SECRET=...
+MPESA_SHORTCODE=174379
+MPESA_PASSKEY=...
+MPESA_CALLBACK_URL=https://your-domain/api/mpesa/callback
+```
+
+### 4. Frontend (React + Vite)
 
 ```bash
-# From project root directory
-source venv/bin/activate  # Linux/macOS
-# OR
-.\venv\Scripts\activate   # Windows
+cd frontend
+npm install
+cp .env.example .env        # optional: overrides the backend URL
+```
 
+The frontend talks to the backend over **absolute URLs with CORS** (see
+`frontend/src/lib/api.js`) — no dev proxy is used. The backend URL resolves in this
+order:
+
+1. `VITE_API_BASE_URL` (from a frontend `.env` / host env var)
+2. `http://127.0.0.1:5000` in dev, or the deployed Render URL in a production build
+
+---
+
+## 🏃 Running the app
+
+Run the **backend** and **frontend** in two terminals.
+
+**Terminal 1 — backend** (from the project root):
+
+```bash
+source venv/bin/activate      # or .\venv\Scripts\activate on Windows
 python app.py
 ```
 
-Backend runs at: `http://127.0.0.1:5000`
+→ Backend at **http://127.0.0.1:5000**
 
-### Terminal 2: Start Frontend Server
+**Terminal 2 — frontend:**
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-Frontend runs at: `http://localhost:5173`
+→ Frontend at **http://localhost:5173** — open this in your browser.
 
-### Access the Application
+To create a production build of the frontend:
 
-Open your browser and navigate to: **http://localhost:5173**
+```bash
+cd frontend
+npm run build      # outputs to frontend/dist
+npm run preview    # preview the production build locally
+```
 
 ---
 
-## 📁 Project Structure
+## 📁 Project structure
 
 ```
-Mental-health-Chatbot/
-├── app.py                 # Flask backend with NLP processing
-├── training.py            # Model training script
-├── intents.json           # Intent patterns and responses
-├── model.h5               # Trained Keras model
-├── texts.pkl              # Vocabulary pickle file
-├── labels.pkl             # Labels pickle file
-├── requirements.txt       # Python dependencies
+mental_health-chatbot/
+├── app.py                  # Flask API: chat, NLP, booking, M-Pesa, health
+├── training.py             # Model training script
+├── convert_to_tflite.py    # One-time model.h5 -> model.tflite conversion
+├── download_models.py      # Fetch model files from Hugging Face
+├── intents.json            # Intent patterns & responses
+├── model.h5 / model.tflite # Trained intent-classification model
+├── texts.pkl / labels.pkl  # Vocabulary & label encoders
+├── appointments.db         # SQLite store for bookings
+├── requirements.txt        # Python dependencies
+├── render.yaml             # Render deployment config (gunicorn)
+├── .env.example            # Backend environment template
 │
-├── frontend/              # React + Vite frontend
+├── frontend/               # React + Vite app
 │   ├── src/
-│   │   ├── components/    # React components
-│   │   │   ├── Header.jsx
-│   │   │   ├── ChatWidget.jsx
-│   │   │   ├── ChatMessage.jsx
-│   │   │   ├── ChatInput.jsx
-│   │   │   └── TypingIndicator.jsx
-│   │   ├── App.jsx        # Main app component
-│   │   ├── main.jsx       # Entry point
-│   │   └── index.css      # Tailwind styles
-│   ├── package.json
+│   │   ├── components/      # ChatBot, Header, BookAppointment, Donate,
+│   │   │                    # Journal, Therapists, AppointmentList, ...
+│   │   ├── lib/api.js       # Backend URL resolution (env-driven)
+│   │   ├── App.jsx          # Routes + landing page
+│   │   └── main.jsx         # Entry point
 │   ├── vite.config.js
-│   └── tailwind.config.js
+│   └── .env.example         # VITE_API_BASE_URL template
 │
-├── static/                # Legacy static files
-├── templates/             # Legacy Flask templates
-└── venv/                  # Virtual environment (not in git)
+├── static/ & templates/    # Legacy Flask HTML interface
+└── venv/                   # Virtual environment (not in git)
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Tech stack
 
-### Backend
-- **Flask** - Web framework
-- **Keras/TensorFlow** - Deep learning model
-- **Sentence Transformers** - Semantic similarity
-- **spaCy** - NLP processing
-- **TextBlob** - Sentiment analysis
-- **MarianMT** - Translation (English ↔ Swahili)
+**Backend:** Flask · Flask-CORS · Gunicorn · TensorFlow Lite · spaCy · TextBlob ·
+Hugging Face Transformers (MarianMT translation) · langdetect · SQLite
 
-### Frontend
-- **React 18** - UI library
-- **Vite** - Build tool
-- **Tailwind CSS** - Styling
-- **Lucide React** - Icons
+**LLM:** Groq (default) · Google Gemini · Ollama — with a local NLP fallback
+
+**Frontend:** React 19 · React Router · Vite 7 · Tailwind CSS v4
 
 ---
 
-## 🔧 Configuration
+## 📝 API endpoints
 
-### Environment Variables (Optional)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Legacy HTML interface |
+| `/get?msg=<message>` | GET | Chatbot response (`&style=` to override tone) |
+| `/analyze?msg=<message>` | GET | NLP analysis (sentiment, entities) |
+| `/health` | GET | Flask + LLM provider status |
+| `/booking` | GET/POST | Create / list appointments |
+| `/bookings_json` | GET | Appointments as JSON |
+| `/mpesa/stk_push` | POST | Initiate an M-Pesa donation |
+| `/mpesa/callback` | POST | M-Pesa payment callback |
 
-Create a `.env` file in the root directory:
+### Response-style tuning
 
-```env
-FLASK_DEBUG=1
-HF_TOKEN=your_huggingface_token  # For faster model downloads
-USE_LLM=true
-OLLAMA_MODEL=qwen2.5:14b-instruct
-OLLAMA_CHAT_URL=http://localhost:11434/api/chat
-OLLAMA_TAGS_URL=http://localhost:11434/api/tags
-LLM_TIMEOUT_SECONDS=45
-LLM_TEMPERATURE=0.5
-LLM_TOP_P=0.9
-RESPONSE_STYLE=balanced
-```
-
-### Ollama Setup (Open-Source LLM)
-
-This project supports local LLM responses via [Ollama](https://ollama.com/), with automatic fallback to the existing NLP intent pipeline if Ollama is unavailable.
-
-1. Install Ollama for your OS.
-2. Pull a recommended model:
-
-```bash
-ollama pull qwen2.5:14b-instruct
-```
-
-3. Start Ollama service (if not already running).
-4. Run the Flask app normally:
-
-```bash
-python app.py
-```
-
-Notes:
-- `USE_LLM=true` enables LLM responses.
-- If Ollama cannot be reached, the app falls back to the existing semantic/intent response engine.
-- Crisis/self-harm phrases are handled by a safety-first response before LLM generation.
-
-### Health Check Endpoint
-
-You can verify backend + Ollama integration with:
-
-```bash
-curl http://127.0.0.1:5000/health
-```
-
-The `/health` response includes:
-- Flask status (`flask.up`)
-- Ollama service reachability (`llm.service_reachable`)
-- Configured model availability (`llm.model_available`)
-- Active style and sampling settings (`response_style`, `llm_temperature`, `llm_top_p`)
-
-### Response Style Tuning
-
-You can choose global style through `.env`:
-- `RESPONSE_STYLE=concise`
-- `RESPONSE_STYLE=balanced`
-- `RESPONSE_STYLE=therapeutic`
-
-You can also override style per request:
+Set a global tone in `.env` — `RESPONSE_STYLE=concise | balanced | therapeutic` — or
+override per request:
 
 ```text
 /get?msg=I%20feel%20overwhelmed&style=therapeutic
 ```
 
-The model sampling can be tuned using:
-- `LLM_TEMPERATURE` (lower = more deterministic, higher = more creative)
-- `LLM_TOP_P` (nucleus sampling)
+Sampling is controlled by `LLM_TEMPERATURE` (creativity) and `LLM_TOP_P` (nucleus).
 
-### Vite Proxy Configuration
+### Health check
 
-The frontend is configured to proxy API requests to the backend. See `frontend/vite.config.js`:
-
-```javascript
-server: {
-  proxy: {
-    '/api': {
-      target: 'http://127.0.0.1:5000',
-      changeOrigin: true,
-      rewrite: (path) => path.replace(/^\/api/, '')
-    }
-  }
-}
+```bash
+curl http://127.0.0.1:5000/health
 ```
+
+Reports Flask status, LLM provider reachability, model availability, and the active
+style/sampling settings.
 
 ---
 
-## 📝 API Endpoints
+## ☁️ Deployment
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Serves the legacy HTML interface |
-| `/get?msg=<message>` | GET | Get chatbot response |
-| `/analyze?msg=<message>` | GET | Get NLP analysis (sentiment, entities) |
+The backend deploys to **Render** via `render.yaml` (gunicorn). On the host, set the
+same environment variables as your `.env` (LLM key, `FRONTEND_URL`, M-Pesa keys). The
+frontend can be deployed to any static host (e.g. Vercel) — set `VITE_API_BASE_URL`
+to your deployed backend URL, and make sure that host's origin matches `FRONTEND_URL`
+so CORS allows it.
 
 ---
 
@@ -340,26 +277,16 @@ server: {
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
 ---
 
 ## 📄 License
 
-This project is open source and available under the [MIT License](LICENSE).
+Open source under the [MIT License](LICENSE).
 
 ---
 
-## 🙏 Acknowledgments
-
-- [Sentence Transformers](https://www.sbert.net/) for semantic search
-- [Hugging Face](https://huggingface.co/) for translation models
-- [spaCy](https://spacy.io/) for NLP processing
-
----
-
-<p align="center">Made with ❤️ for mental health awareness</p>
-
-
+<p align="center">Made with ❤️ for mental health awareness — you are not alone.</p>

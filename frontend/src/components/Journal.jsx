@@ -167,7 +167,7 @@ export default function Journal() {
                 <textarea
                   value={text}
                   onChange={(e) => setText(e.target.value)}
-                  placeholder="Write freely — this is your private space..."
+                  placeholder="Write freely, this is your private space..."
                   rows={6}
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
                 />

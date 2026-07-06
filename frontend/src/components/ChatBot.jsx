@@ -40,7 +40,7 @@ export default function ChatBot() {
   const [messages, setMessages] = useState([
     {
       from: "bot",
-      text: "Hi, I'm MindCare 💙 A safe, supportive space to share what's on your mind — no judgement. How are you feeling today?",
+      text: "Hi, I'm MindCare 💙 A safe, supportive space to share what's on your mind, no judgement. How are you feeling today?",
       showBooking: true,
       time: now(),
     },
@@ -124,7 +124,7 @@ export default function ChatBot() {
               <p className="font-semibold leading-tight">MindCare Assistant</p>
               <p className="text-[11px] text-white/80 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 bg-green-300 rounded-full" />
-                Online — here to listen
+                Online, here to listen
               </p>
             </div>
             <button
