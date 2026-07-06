@@ -12,7 +12,6 @@ import numpy as np
 import requests
 import sqlite3
 import spacy
-import tensorflow as tf
 import nltk
 
 from flask import Flask, render_template, request, jsonify
@@ -24,6 +23,27 @@ from nltk.stem import WordNetLemmatizer
 from nltk.corpus import wordnet
 from textblob import TextBlob
 from transformers import MarianTokenizer, MarianMTModel
+
+# --- TFLite Interpreter ---
+# Inference runs through a lightweight TFLite interpreter instead of full
+# TensorFlow/Keras, so the deployment image stays small. The .h5 model is
+# converted once, offline, via convert_to_tflite.py (WITHOUT post-training
+# quantization - quantization emits newer ops like FULLY_CONNECTED v12 that
+# older/lightweight runtimes can't read); re-run that script if the model
+# is ever retrained.
+#
+# Import order:
+#   1. tflite_runtime  - standalone runtime used in production (Linux, via requirements.txt)
+#   2. ai_edge_litert  - its actively maintained successor, if installed instead
+#   3. tensorflow.lite - fallback for local dev machines that already have full TF
+try:
+    from tflite_runtime.interpreter import Interpreter
+except ImportError:
+    try:
+        from ai_edge_litert.interpreter import Interpreter
+    except ImportError:
+        import tensorflow as tf
+        Interpreter = tf.lite.Interpreter
 
 # --- Load environment variables from .env for local development ---
 load_dotenv()
@@ -51,10 +71,22 @@ from download_models import download_models
 
 download_models()
 
-interpreter = tf.lite.Interpreter(model_path='model.tflite')
+interpreter = Interpreter(model_path='model.tflite')
 interpreter.allocate_tensors()
-tflite_input_details = interpreter.get_input_details()
-tflite_output_details = interpreter.get_output_details()
+_input_detail = interpreter.get_input_details()[0]
+_output_detail = interpreter.get_output_details()[0]
+
+
+def model_predict(x):
+    """Run one forward pass through the TFLite model.
+
+    x: array shaped (1, num_features). Returns a 2D array of class
+    probabilities, matching the shape the old keras model.predict() gave.
+    """
+    x = np.asarray(x, dtype=_input_detail['dtype'])
+    interpreter.set_tensor(_input_detail['index'], x)
+    interpreter.invoke()
+    return interpreter.get_tensor(_output_detail['index'])
 
 intents = json.loads(open('intents.json').read())
 words = pickle.load(open('texts.pkl', 'rb'))
@@ -257,10 +289,7 @@ def bow(sentence, words, show_details=True):
 
 def predict_class(sentence, model=None):
     p = bow(sentence, words, show_details=False)
-    input_data = np.array([p], dtype=np.float32)
-    interpreter.set_tensor(tflite_input_details[0]['index'], input_data)
-    interpreter.invoke()
-    res = interpreter.get_tensor(tflite_output_details[0]['index'])[0]
+    res = model_predict(np.array([p]))[0]
 
     ERROR_THRESHOLD = 0.1
     results = [[i, r] for i, r in enumerate(res) if r > ERROR_THRESHOLD]
@@ -720,10 +749,11 @@ app.static_folder = 'static'
 # later. Set FRONTEND_URL in your backend's environment (Render/Railway/etc.)
 # to your real Vercel production URL, e.g.:
 #   FRONTEND_URL=https://mental-health-chatbot-seven-gold.vercel.app
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://mental-health-chatbot-seven-gold.vercel.app")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://joyhealth.vercel.app")
 
 ALLOWED_ORIGINS = [
     FRONTEND_URL,
+    "https://joyhealth.vercel.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:3000",
