@@ -48,7 +48,7 @@ export default function ChatBot() {
     }
 
     try {
-      const res = await fetch(`/api/get?msg=${encodeURIComponent(text)}`);
+      const res = await fetch(`/get?msg=${encodeURIComponent(text)}`);
       const reply = await res.text();
       setMessages((prev) => [...prev, { from: "bot", text: reply }]);
     } catch {

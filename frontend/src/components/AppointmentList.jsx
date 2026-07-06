@@ -6,7 +6,7 @@ export default function AppointmentList() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/bookings_json")
+    fetch("/bookings_json")
       .then((r) => r.json())
       .then((data) => {
         setBookings(data);

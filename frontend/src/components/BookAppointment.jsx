@@ -16,7 +16,7 @@ export default function BookAppointment() {
       body.append("date", form.date);
       body.append("time", form.time);
 
-      const res = await fetch("/api/booking", {
+      const res = await fetch("/booking", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),
