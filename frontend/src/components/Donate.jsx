@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { apiUrl } from "../lib/api";
+import PageLayout from "./PageLayout";
 
 const PRESET_AMOUNTS = [100, 500, 1000, 2000, 5000];
 
@@ -50,8 +50,9 @@ export default function Donate() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-50 to-pink-100 flex items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md bg-white/90 backdrop-blur-sm rounded-2xl shadow-lg p-8">
+    <PageLayout>
+      <div className="flex items-center justify-center px-4 pt-24 pb-12">
+        <div className="w-full max-w-md bg-white/90 backdrop-blur-sm rounded-2xl shadow-lg p-8">
 
         <div className="text-center mb-6">
           <div className="text-4xl mb-2">💚</div>
@@ -143,14 +144,9 @@ export default function Donate() {
           >
             {loading ? "Processing..." : "Donate via M-Pesa"}
           </button>
-
-          <div className="text-center">
-            <Link to="/" className="text-sm text-indigo-600 hover:underline">
-              Back to Home
-            </Link>
-          </div>
         </form>
+        </div>
       </div>
-    </div>
+    </PageLayout>
   );
 }

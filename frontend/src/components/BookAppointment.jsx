@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { apiUrl } from "../lib/api";
+import PageLayout from "./PageLayout";
 
 export default function BookAppointment() {
   const [form, setForm] = useState({ name: "", email: "", date: "", time: "" });
@@ -65,8 +66,9 @@ export default function BookAppointment() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-50 to-pink-100 flex items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/60 p-8">
+    <PageLayout>
+      <div className="flex items-center justify-center px-4 pt-24 pb-12">
+        <div className="w-full max-w-md bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/60 p-8">
         <div className="text-center mb-6">
           <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-2xl shadow-lg">
             🗓️
@@ -152,12 +154,6 @@ export default function BookAppointment() {
               "Book Appointment"
             )}
           </button>
-
-          <div className="text-center">
-            <Link to="/" className="text-sm text-indigo-600 hover:underline">
-              Back to Home
-            </Link>
-          </div>
         </form>
       </div>
 
@@ -216,6 +212,7 @@ export default function BookAppointment() {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </PageLayout>
   );
 }

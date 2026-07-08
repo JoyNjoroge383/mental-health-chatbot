@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
 import { apiUrl } from "../lib/api";
+import PageLayout from "./PageLayout";
 
 export default function AppointmentList() {
   const [bookings, setBookings] = useState([]);
@@ -16,16 +16,11 @@ export default function AppointmentList() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-50 to-pink-100 px-4 py-12">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
+    <PageLayout>
+      <div className="px-4 pt-24 pb-12">
+        <div className="max-w-4xl mx-auto">
+        <div className="mb-8">
           <h2 className="text-3xl font-bold text-gray-800">Booked Appointments</h2>
-          <Link
-            to="/"
-            className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-full hover:bg-indigo-700"
-          >
-            Back to Home
-          </Link>
         </div>
 
         {loading ? (
@@ -61,7 +56,8 @@ export default function AppointmentList() {
             </table>
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </PageLayout>
   );
 }

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import PageLayout from "./PageLayout";
 
 const THERAPISTS = [
   {
@@ -122,8 +123,9 @@ export default function Therapists() {
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-50 to-pink-100 px-4 py-12">
-      <div className="max-w-4xl mx-auto">
+    <PageLayout>
+      <div className="px-4 pt-24 pb-12">
+        <div className="max-w-4xl mx-auto">
 
         <div className="text-center mb-8">
           <div className="text-5xl mb-3">🏥</div>
@@ -242,12 +244,8 @@ export default function Therapists() {
           )}
         </div>
 
-        <div className="text-center mt-8">
-          <Link to="/" className="text-sm text-indigo-600 hover:underline">
-            Back to Home
-          </Link>
         </div>
       </div>
-    </div>
+    </PageLayout>
   );
 }

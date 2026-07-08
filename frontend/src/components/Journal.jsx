@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import PageLayout from "./PageLayout";
 
 const MOODS = [
   { emoji: "😊", label: "Happy" },
@@ -72,8 +72,9 @@ export default function Journal() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-50 to-pink-100 px-4 py-12">
-      <div className="max-w-2xl mx-auto">
+    <PageLayout>
+      <div className="px-4 pt-24 pb-12">
+        <div className="max-w-2xl mx-auto">
 
         {/* Header */}
         <div className="text-center mb-8">
@@ -228,13 +229,8 @@ export default function Journal() {
           </div>
         )}
 
-        {/* Back to home */}
-        <div className="text-center mt-8">
-          <Link to="/" className="text-sm text-indigo-600 hover:underline">
-            Back to Home
-          </Link>
         </div>
       </div>
-    </div>
+    </PageLayout>
   );
 }
