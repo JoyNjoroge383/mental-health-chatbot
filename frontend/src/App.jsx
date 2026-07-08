@@ -35,8 +35,8 @@ function HomePage() {
       <div className="relative z-10">
         <Header />
 
-        {/* Hero */}
-        <main className="container mx-auto px-4 pt-16 pb-12">
+        {/* Hero — pt-24 clears the fixed header (h-16) with room to breathe */}
+        <main className="container mx-auto px-4 pt-24 pb-12">
           <div className="max-w-4xl mx-auto text-center">
             <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/70 backdrop-blur-sm text-indigo-700 text-sm font-medium shadow-sm mb-6">
               <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse-slow"></span>
