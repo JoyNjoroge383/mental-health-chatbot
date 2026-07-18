@@ -250,50 +250,76 @@ def get_nlp_prediction(sentence):
 
 
 # --- Translation Models ---
-def download_and_save_models():
-    """Downloads and saves the translation models to a local directory."""
-    models_dir = "models"
-    if not os.path.exists(models_dir):
-        os.makedirs(models_dir)
+# Anchor the local model cache to this file's directory, not the process's
+# current working directory. Under gunicorn (production) the cwd is not
+# guaranteed to be the project root, which previously made the relative
+# "models/en-sw" path resolve to nothing and load as a (nonexistent) Hub id.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(BASE_DIR, "models")
 
-    model_map = {
-        "Rogendo/en-sw": os.path.join(models_dir, "en-sw"),
-        "Rogendo/sw-en": os.path.join(models_dir, "sw-en"),
-    }
-
-    for model_name, local_path in model_map.items():
-        if not os.path.exists(local_path):
-            print(f"Downloading and saving {model_name} to {local_path}...")
-            try:
-                tokenizer = MarianTokenizer.from_pretrained(model_name)
-                model = MarianMTModel.from_pretrained(model_name)
-                tokenizer.save_pretrained(local_path)
-                model.save_pretrained(local_path)
-                print(f"Successfully saved {model_name}.")
-            except Exception as e:
-                print(f"Error downloading {model_name}: {e}")
-
-    return model_map
+TRANSLATION_MODELS = {
+    "en-sw": "Rogendo/en-sw",  # English  -> Swahili
+    "sw-en": "Rogendo/sw-en",  # Swahili  -> English
+}
 
 
-local_model_paths = download_and_save_models()
-en_sw_path = local_model_paths["Rogendo/en-sw"]
-sw_en_path = local_model_paths["Rogendo/sw-en"]
+def _is_valid_model_dir(path):
+    """A model folder is only usable if it actually contains a config.json.
+    An empty or half-downloaded directory must NOT be trusted."""
+    return os.path.isfile(os.path.join(path, "config.json"))
 
-print("Loading translation models from local cache...")
-try:
-    eng_swa_tokenizer = MarianTokenizer.from_pretrained(en_sw_path)
-    eng_swa_model = MarianMTModel.from_pretrained(en_sw_path)
 
-    swa_eng_tokenizer = MarianTokenizer.from_pretrained(sw_en_path)
-    swa_eng_model = MarianMTModel.from_pretrained(sw_en_path)
+def load_translation_model(repo_id, local_dirname):
+    """Load one MarianMT model, resilient to a missing/incomplete local cache.
 
+    Order of attempts:
+      1. Load from the local folder if it looks complete (offline, fast).
+      2. Otherwise download from the Hugging Face Hub, then save locally so
+         subsequent starts are offline.
+    Returns (tokenizer, model), or (None, None) if every attempt fails.
+    """
+    local_path = os.path.join(MODELS_DIR, local_dirname)
+
+    if _is_valid_model_dir(local_path):
+        try:
+            print(f"Loading {local_dirname} translation model from local cache...")
+            return (
+                MarianTokenizer.from_pretrained(local_path),
+                MarianMTModel.from_pretrained(local_path),
+            )
+        except Exception as e:
+            print(f"Local load failed for {local_dirname} ({e}); will try the Hub.")
+
+    try:
+        print(f"Downloading {repo_id} from the Hugging Face Hub...")
+        tokenizer = MarianTokenizer.from_pretrained(repo_id)
+        model = MarianMTModel.from_pretrained(repo_id)
+        # Best-effort save so the next startup can load offline.
+        try:
+            os.makedirs(local_path, exist_ok=True)
+            tokenizer.save_pretrained(local_path)
+            model.save_pretrained(local_path)
+            print(f"Cached {repo_id} to {local_path}.")
+        except Exception as e:
+            print(f"Warning: could not cache {repo_id} locally: {e}")
+        return tokenizer, model
+    except Exception as e:
+        print(f"ERROR: Could not load translation model {repo_id}: {e}")
+        return None, None
+
+
+eng_swa_tokenizer, eng_swa_model = load_translation_model(
+    TRANSLATION_MODELS["en-sw"], "en-sw"
+)
+swa_eng_tokenizer, swa_eng_model = load_translation_model(
+    TRANSLATION_MODELS["sw-en"], "sw-en"
+)
+
+if eng_swa_model and swa_eng_model:
     print("Translation models loaded successfully.")
-except Exception as e:
-    print(f"FATAL: Could not load translation models from cache: {e}")
-    print("The application may not function correctly without these models.")
-    eng_swa_tokenizer, eng_swa_model = None, None
-    swa_eng_tokenizer, swa_eng_model = None, None
+else:
+    print("WARNING: One or more translation models are unavailable. "
+          "Swahili support will be degraded until they load.")
 
 
 def translate_to_swahili(text):
