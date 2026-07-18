@@ -322,28 +322,35 @@ else:
           "Swahili support will be degraded until they load.")
 
 
-def translate_to_swahili(text):
-    if not text or not eng_swa_model:
+def _translate(text, tokenizer, model, direction):
+    """Translate text sentence-by-sentence.
+
+    The previous implementation truncated the whole message at 128 tokens, so
+    any multi-sentence text (crisis message, offline fallback reply) lost most
+    of its content. Splitting on sentence boundaries first means each piece
+    fits comfortably and the full message is translated.
+    """
+    if not text or not model:
         return ""
     try:
-        inputs = eng_swa_tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=128)
-        translated = eng_swa_model.generate(**inputs)
-        return eng_swa_tokenizer.decode(translated[0], skip_special_tokens=True)
+        chunks = [c.strip() for c in re.split(r"(?<=[.!?])\s+", text.strip()) if c.strip()]
+        outputs = []
+        for chunk in chunks:
+            inputs = tokenizer(chunk, return_tensors="pt", padding=True, truncation=True, max_length=512)
+            translated = model.generate(**inputs, max_length=512)
+            outputs.append(tokenizer.decode(translated[0], skip_special_tokens=True))
+        return " ".join(outputs).strip() or text
     except Exception as e:
-        print(f"Translation Error (En->Sw): {e}")
+        print(f"Translation Error ({direction}): {e}")
         return text
+
+
+def translate_to_swahili(text):
+    return _translate(text, eng_swa_tokenizer, eng_swa_model, "En->Sw")
 
 
 def translate_to_english(text):
-    if not text or not swa_eng_model:
-        return ""
-    try:
-        inputs = swa_eng_tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=128)
-        translated = swa_eng_model.generate(**inputs)
-        return swa_eng_tokenizer.decode(translated[0], skip_special_tokens=True)
-    except Exception as e:
-        print(f"Translation Error (Sw->En): {e}")
-        return text
+    return _translate(text, swa_eng_tokenizer, swa_eng_model, "Sw->En")
 
 
 # --- Chatbot Logic ---
@@ -497,10 +504,26 @@ CRISIS_PATTERNS = [
 ]
 
 
+LANGUAGE_NAMES = {"sw": "Swahili (Kiswahili)", "en": "English"}
+
+
 def get_style_instruction(style):
     """Return style instruction for prompt tuning."""
     normalized = (style or DEFAULT_RESPONSE_STYLE).strip().lower()
     return STYLE_INSTRUCTIONS.get(normalized, STYLE_INSTRUCTIONS["balanced"])
+
+
+def get_language_instruction(target_language):
+    """Tell the LLM which language to reply in.
+
+    The LLM (e.g. gpt-oss-120b) is multilingual, so for Swahili we ask it to
+    reply in Swahili directly instead of round-tripping a long English answer
+    through the MarianMT model (which truncates at 128 tokens and can garble or
+    drop most of the reply). This is what makes Swahili answers actually work
+    on the LLM path.
+    """
+    name = LANGUAGE_NAMES.get(target_language, "English")
+    return f"Write your ENTIRE response in {name}. Do not use any other language."
 
 
 def contains_crisis_language(raw_text, processing_text):
@@ -529,7 +552,7 @@ def get_crisis_response():
     )
 
 
-def generate_groq_response(user_text, sentiment_info, response_style=None):
+def generate_groq_response(user_text, sentiment_info, response_style=None, target_language="en"):
     """Generate response via Groq API (OpenAI-compatible). Returns None on failure."""
     if not GROQ_API_KEY:
         print("Groq API key not configured.")
@@ -537,10 +560,12 @@ def generate_groq_response(user_text, sentiment_info, response_style=None):
 
     try:
         style_instruction = get_style_instruction(response_style)
+        language_instruction = get_language_instruction(target_language)
         user_prompt = (
             f"User message: {user_text}\n"
             f"Detected sentiment: {sentiment_info['sentiment']} (polarity={sentiment_info['polarity']:.2f}).\n"
             f"Style instruction: {style_instruction}\n"
+            f"Language instruction: {language_instruction}\n"
             "Respond with emotional support and practical next steps."
         )
         payload = {
@@ -588,7 +613,7 @@ def generate_groq_response(user_text, sentiment_info, response_style=None):
         return None
 
 
-def generate_gemini_response(user_text, sentiment_info, response_style=None):
+def generate_gemini_response(user_text, sentiment_info, response_style=None, target_language="en"):
     """Generate response via Google Gemini API. Returns None on failure."""
     if not GEMINI_API_KEY:
         print("Gemini API key not configured.")
@@ -596,10 +621,12 @@ def generate_gemini_response(user_text, sentiment_info, response_style=None):
 
     try:
         style_instruction = get_style_instruction(response_style)
+        language_instruction = get_language_instruction(target_language)
         user_prompt = (
             f"User message: {user_text}\n"
             f"Detected sentiment: {sentiment_info['sentiment']} (polarity={sentiment_info['polarity']:.2f}).\n"
             f"Style instruction: {style_instruction}\n"
+            f"Language instruction: {language_instruction}\n"
             "Respond with emotional support and practical next steps."
         )
         url = GEMINI_CHAT_URL.format(model=GEMINI_MODEL) + f"?key={GEMINI_API_KEY}"
@@ -643,14 +670,16 @@ def generate_gemini_response(user_text, sentiment_info, response_style=None):
         return None
 
 
-def generate_ollama_response(user_text, sentiment_info, response_style=None):
+def generate_ollama_response(user_text, sentiment_info, response_style=None, target_language="en"):
     """Generate response via Ollama chat API. Returns None on failure."""
     try:
         style_instruction = get_style_instruction(response_style)
+        language_instruction = get_language_instruction(target_language)
         user_prompt = (
             f"User message: {user_text}\n"
             f"Detected sentiment: {sentiment_info['sentiment']} (polarity={sentiment_info['polarity']:.2f}).\n"
             f"Style instruction: {style_instruction}\n"
+            f"Language instruction: {language_instruction}\n"
             "Respond with emotional support and practical next steps."
         )
         payload = {
@@ -684,14 +713,14 @@ def generate_ollama_response(user_text, sentiment_info, response_style=None):
         return None
 
 
-def generate_llm_response(user_text, sentiment_info, response_style=None):
+def generate_llm_response(user_text, sentiment_info, response_style=None, target_language="en"):
     """Generate response via configured LLM provider (Groq, Gemini, or Ollama). Returns None on failure."""
     if LLM_PROVIDER == "groq":
-        return generate_groq_response(user_text, sentiment_info, response_style)
+        return generate_groq_response(user_text, sentiment_info, response_style, target_language)
     elif LLM_PROVIDER == "gemini":
-        return generate_gemini_response(user_text, sentiment_info, response_style)
+        return generate_gemini_response(user_text, sentiment_info, response_style, target_language)
     else:
-        return generate_ollama_response(user_text, sentiment_info, response_style)
+        return generate_ollama_response(user_text, sentiment_info, response_style, target_language)
 
 
 def check_groq_status():
@@ -875,22 +904,31 @@ def get_bot_response():
     # 3. NLP Analysis
     sentiment_info = analyze_sentiment(processing_text)
 
-    # 4. Safety gate + LLM/NLP response selection
+    # 4. Safety gate + response selection.
+    #    The LLM replies directly in the user's language (see get_language_instruction),
+    #    so its output must NOT be re-translated. The crisis message and the offline
+    #    NLP fallback are English, so those are translated to Swahili when needed.
     if contains_crisis_language(userText, processing_text):
-        bot_response_en = get_crisis_response()
+        final_response = get_crisis_response()  # English
+        needs_translation = True
     else:
-        bot_response_en = None
+        llm_response = None
         if USE_LLM:
-            bot_response_en = generate_llm_response(processing_text, sentiment_info, response_style)
-        if not bot_response_en:
-            bot_response_en = generate_nlp_response(processing_text, sentiment_info)
+            llm_response = generate_llm_response(
+                processing_text, sentiment_info, response_style, detected_language
+            )
+        if llm_response:
+            final_response = llm_response       # already in the target language
+            needs_translation = False
+        else:
+            final_response = generate_nlp_response(processing_text, sentiment_info)  # English
+            needs_translation = True
 
-    print(f"Bot Response (En): {bot_response_en}")
+    print(f"Bot Response: {final_response}")
 
-    # 5. Final Output Processing
-    final_response = bot_response_en
-    if detected_language == 'sw':
-        final_response = translate_to_swahili(bot_response_en)
+    # 5. Translate English (crisis / offline fallback) responses back to Swahili.
+    if detected_language == 'sw' and needs_translation:
+        final_response = translate_to_swahili(final_response)
         print(f"Translated Response (Sw): {final_response}")
 
     print(f"{'='*50}\n")
