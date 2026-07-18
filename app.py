@@ -103,6 +103,56 @@ if not Language.has_factory("language_detector"):
     Language.factory("language_detector", func=get_lang_detector)
     nlp.add_pipe('language_detector', last=True)
 
+
+# --- Robust language detection (English vs Swahili) ---
+# langdetect (used by spacy-langdetect) is unreliable on short text: it tags
+# "Habari" as Somali and "Nisaidie tafadhali" as Somali/Afrikaans, so the
+# Swahili branch never fired and the bot replied in English. A Swahili keyword
+# hit is a much stronger signal for short messages, so we check that first and
+# only fall back to the statistical detector for longer text.
+SWAHILI_MARKERS = {
+    # greetings / courtesy
+    "habari", "mambo", "sasa", "shikamoo", "hujambo", "sijambo", "salama",
+    "asante", "karibu", "tafadhali", "pole", "samahani", "nzuri", "sawa",
+    # pronouns / common verbs
+    "nina", "sina", "nataka", "sitaki", "nahitaji", "ninahitaji", "nisaidie",
+    "naomba", "sijui", "najisikia", "ninajisikia", "nafikiri", "niko", "uko",
+    "mimi", "wewe", "yeye", "sisi", "nyinyi", "wao", "ni", "na", "kwa",
+    # question words
+    "nini", "nani", "wapi", "lini", "vipi", "kwanini", "kwani", "je",
+    # connectors / frequent words
+    "sana", "kama", "lakini", "bado", "tena", "ndio", "hapana", "yangu",
+    "wangu", "hii", "hiyo", "huyu",
+    # feelings / mental-health domain
+    "huzuni", "furaha", "wasiwasi", "hofu", "uchovu", "msongo", "mawazo",
+    "maisha", "msaada", "afya", "akili", "moyo", "kufa", "kujiua", "sikitiko",
+    "upweke", "hasira", "machozi", "shida", "matatizo",
+}
+
+
+def detect_language(text):
+    """Return 'sw' for Swahili or 'en' for English.
+
+    A Swahili keyword hit overrides the statistical detector (which misreads
+    short Swahili). Only trust the detector's 'sw' verdict when it is
+    reasonably confident; otherwise default to English.
+    """
+    if not text or not text.strip():
+        return "en"
+
+    tokens = re.findall(r"[a-zA-Z']+", text.lower())
+    if any(tok in SWAHILI_MARKERS for tok in tokens):
+        return "sw"
+
+    try:
+        detected = nlp(text)._.language
+        if detected.get("language") == "sw" and detected.get("score", 0.0) >= 0.9:
+            return "sw"
+    except Exception as e:
+        print(f"Language detection fallback error: {e}")
+
+    return "en"
+
 # --- NLP: Sentence Transformer for Semantic Understanding (disabled) ---
 print("Sentence Transformer disabled")
 sentence_model = None
@@ -786,9 +836,8 @@ def get_bot_response():
     print(f"\n{'='*50}")
     print(f"Raw Input: {userText}")
 
-    # 1. Detect Language
-    doc = nlp(userText)
-    detected_language = doc._.language['language']
+    # 1. Detect Language (Swahili vs English)
+    detected_language = detect_language(userText)
     print(f"Detected Language: {detected_language}")
 
     # 2. Prepare text for processing (Must be English for the chatbot model)
