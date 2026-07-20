@@ -1,22 +1,34 @@
 import { useState, useRef, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { apiUrl } from '../lib/api'
 
+// Explicit intent to schedule a visit -> the booking form.
 const BOOKING_KEYWORDS = [
-  "book", "appointment", "schedule", "session",
-  "meet", "therapist", "psychiatrist", "consultation", "visit",
+  "book", "appointment", "schedule", "session", "consultation",
+];
+
+// Wanting a therapist suggestion / to see who's available -> the therapists page.
+const THERAPIST_KEYWORDS = [
+  "recommend", "recommendation", "suggest",
+  "therapist", "psychiatrist", "psychologist", "counselor", "counsellor",
+  "who should i see", "find someone", "meet a", "visit a",
 ];
 
 const QUICK_REPLIES = [
   "How are you?",
   "I'm feeling anxious",
-  "I need help",
+  "Recommend a therapist",
   "Book an appointment",
 ];
 
 function isBookingIntent(text) {
   const lower = text.toLowerCase();
   return BOOKING_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+function isTherapistIntent(text) {
+  const lower = text.toLowerCase();
+  return THERAPIST_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
 function now() {
@@ -34,6 +46,7 @@ function BotAvatar() {
 }
 
 export default function ChatBot() {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState("");
@@ -66,12 +79,17 @@ export default function ChatBot() {
     pushMessage({ from: "user", text });
     setInput("");
 
+    // Explicit booking intent takes priority (e.g. "book a session with a therapist").
     if (isBookingIntent(text)) {
-      pushMessage({
-        from: "bot",
-        text: "It sounds like you'd like to book an appointment. You can do that here:",
-        showBooking: true,
-      });
+      setOpen(false);
+      navigate("/booking");
+      return;
+    }
+
+    // Otherwise, if they're after a therapist recommendation, take them to the list.
+    if (isTherapistIntent(text)) {
+      setOpen(false);
+      navigate("/therapists");
       return;
     }
 
